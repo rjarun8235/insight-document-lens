@@ -2,7 +2,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { ComparisonResult, DocumentFile } from '@/lib/types';
 
-// Helper: convert image file to base64 string
+// Helper to convert a File object (image) to base64 and media type
 async function fileToBase64(file: File): Promise<{base64: string, mediaType: string}> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -18,77 +18,80 @@ async function fileToBase64(file: File): Promise<{base64: string, mediaType: str
   });
 }
 
-// Main analysis function (Anthropic Claude)
+// Main Claude analysis, for both images & text files, tailored for logistics docs and standard use
 export async function analyzeDocuments(
   documents: (string | { image: File, text?: string })[], 
   instruction: string
 ): Promise<ComparisonResult> {
-  // Initialize Anthropic SDK (API key must be set via secrets or process.env)
-  const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY || ''; // Consider using Supabase Edge secrets if needed.
+  // Get Claude API Key
+  const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY || '';
   if (!apiKey) throw new Error('Anthropic API key is missing.');
 
   const anthropic = new Anthropic({ apiKey });
 
-  // Compose content for multimodal (text + image) if any image exists
+  // Compose multi-modal content for Claude (for text + image docs)
   let hasImage = documents.some(doc => typeof doc === 'object');
   let messages: any[] = [];
 
   if (hasImage) {
-    // Compose content array with image and text
+    // Images + Text: each "doc" is either a string or { image, text? }
+    // Structure per Claude's vision/multimodal API
+    const multimodalContent = await Promise.all(
+      documents.map(async doc => {
+        if (typeof doc === 'string') {
+          // Just text (parsed contents of PDF, Word, etc)
+          return { type: "text", text: doc };
+        } else {
+          // Image (with base64)
+          const { base64, mediaType } = await fileToBase64(doc.image);
+          const contentArray = [
+            {
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: mediaType,
+                data: base64,
+              },
+            }
+          ];
+          // Add associated OCR text (if present from front-end parser)
+          if (doc.text) {
+            contentArray.push({ type: "text", text: doc.text });
+          }
+          return contentArray;
+        }
+      })
+    );
+
+    // Flatten and append the instruction for comparison/analysis 
     messages = [
       {
         role: "user",
-        content: await Promise.all(documents.map(async doc => {
-          if (typeof doc === 'string') {
-            // Text doc (parsed text of non-image file)
-            return {
-              type: "text",
-              text: doc
-            };
-          } else {
-            // Image document
-            const { base64, mediaType } = await fileToBase64(doc.image);
-            let arr: any[] = [
-              {
-                type: "image",
-                source: {
-                  type: "base64",
-                  media_type: mediaType,
-                  data: base64,
-                }
-              }
-            ];
-            // Optionally add associated OCR text if present (rare), or leave as just image
-            if (doc.text) arr.push({ type: "text", text: doc.text });
-            return arr;
-          }
-        })).then(parts => parts.flat().concat({type: "text", text: instruction}))
+        content: multimodalContent.flat().concat({ type: "text", text: instruction })
       }
     ];
   } else {
-    // All text docs: concatenate + add instruction as final message
+    // Text-only case
     messages = [{
       role: "user",
       content: [
         ...documents.map(doc => ({
           type: "text",
-          text: typeof doc === "string" ? doc : doc.text || ''
+          text: typeof doc === "string" ? doc : (doc.text || '')
         })),
         { type: "text", text: instruction }
       ]
     }];
   }
 
-  // Call Anthropic Claude
+  // Claude API call
   const response = await anthropic.messages.create({
-    model: "claude-3-5-haiku-20241022", // Update as model version needed
+    model: "claude-3-5-haiku-20241022",
     max_tokens: 5000,
     messages,
   });
 
-  // You'd normally parse 'response' to create a ComparisonResult, for now simulate
-  // Placeholder: Return mock result until wiring up full Claude JSON downstream
-  // (TODO: parse response content as needed)
+  // Placeholder: Parse Claude's response structure as desired
   return {
     tables: [
       {
@@ -113,26 +116,26 @@ export async function analyzeDocuments(
   };
 }
 
-// Enhanced instruction builder with logistics-specifics
+// Instruction builder for various doc types (esp. logistics: packing-list, invoice, bill-of-entry)
 export function prepareInstructions(comparisonType: string): string {
   const baseInstruction = `
-  Carefully analyze and compare the uploaded documents. 
-  Output should include:
-  1. Table with compared values & sections (especially those relevant for logistics documents)
-  2. Verification
-  3. Validation
-  4. Review
-  5. Analysis
-  6. Summary
-  7. Insights
-  8. Recommendations
-  9. Risks
-  10. Issues
+Carefully analyze and compare the uploaded documents.
+Output should include:
+1. Table with compared values & sections (especially those relevant for logistics/forwarding)
+2. Verification
+3. Validation
+4. Review
+5. Analysis
+6. Summary
+7. Insights
+8. Recommendations
+9. Risks
+10. Issues
 
-  For tables, extract and compare all major values (dates, IDs, totals, etc).
-  `;
+For tables, extract and compare all major values (dates, IDs, totals, etc).
+`;
 
-  // Add packing/invoice/bill-of-entry specific instructions
+  // Specific details for the key logistics activities
   const specific: Record<string, string> = {
     'packing-list':
       "Focus on items, quantities, weight, packaging type, consignee/consignor, shipment IDs, and dates.",
@@ -140,14 +143,14 @@ export function prepareInstructions(comparisonType: string): string {
       "Focus on invoice numbers, shipment details, item prices, taxes, totals, and currency.",
     'bill-of-entry':
       "Focus on customs details, HS codes, duties, declared goods, shipper/receiver, and regulatory fields.",
-    // Add fallback for previous types too
+    // Older/fallback types for general apps
     'contracts': "Focus on parties, terms, financials, and validity dates.",
     'invoices': "Extract invoice numbers, dates, items, quantity, price, taxes, total.",
     'resumes': "Compare skills, roles, education, relevant dates.",
     'reports': "Compare key findings, sections, metrics."
   };
 
-  // Try logistic type, then previous types, else default
+  // Normalize input for matching
   const logiKey = comparisonType.toLowerCase().replace(/\s+/g, '-');
   return baseInstruction + (specific[logiKey] || '');
 }
