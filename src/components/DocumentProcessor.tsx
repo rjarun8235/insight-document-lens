@@ -1,417 +1,300 @@
-
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { DocumentFile, ComparisonResult } from '@/lib/types';
-import { parseDocument } from '@/lib/parsers';
-import { analyzeDocuments, prepareInstructions } from '@/services/claude-service';
-import { Button } from '@/components/ui/custom-button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { FileUpload } from './FileUpload';
-import { AnalysisResults } from './AnalysisResults';
-import { ProcessingError } from './ProcessingError';
-import { DocumentCard } from './DocumentCard';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { Progress } from '@/components/ui/progress';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Loader2, Search, Send } from 'lucide-react';
+import { parseDocument } from '@/lib/parsers';
+import { analyzeDocuments } from '@/services/claude-service';
+import { Button } from '@/components/ui/custom-button';
+import { ComparisonView } from './ComparisonView';
+import { LoadingIndicator, LoadingOverlay } from './ui/loading-indicator';
 
 export function DocumentProcessor() {
   const [files, setFiles] = useState<DocumentFile[]>([]);
-  const [comparisonType, setComparisonType] = useState<string>('general');
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [processingStatus, setProcessingStatus] = useState<string>('');
-  const [timeoutId, setTimeoutId] = useState<number | null>(null);
-  const [results, setResults] = useState<ComparisonResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<string>('upload');
-  const [followUpQuestion, setFollowUpQuestion] = useState<string>('');
-  const [isAskingFollowUp, setIsAskingFollowUp] = useState(false);
-
-  // Store parsed documents for reuse with caching
   const [parsedDocuments, setParsedDocuments] = useState<(string | { image: File, text?: string })[]>([]);
+  const [comparisonType, setComparisonType] = useState<string>('verification');
+  const [comparisonResult, setComparisonResult] = useState<ComparisonResult | null>(null);
+  const [isProcessing, setIsProcessing] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+  const [followUpQuestion, setFollowUpQuestion] = useState<string>('');
+  const [isAskingFollowUp, setIsAskingFollowUp] = useState<boolean>(false);
+  const [processingProgress, setProcessingProgress] = useState<number>(0);
+  const [documentNames, setDocumentNames] = useState<string[]>([]);
 
-  const handleFilesSelected = (newFiles: DocumentFile[]) => {
-    setFiles((prev) => [...prev, ...newFiles]);
-    setResults(null);
+  useEffect(() => {
+    // Reset state when files change
+    setParsedDocuments([]);
+    setComparisonResult(null);
     setError(null);
+    setFollowUpQuestion('');
+    setProcessingProgress(0);
+    
+    // Update document names for display in comparison view
+    if (files.length > 0) {
+      setDocumentNames(files.map(file => file.name));
+    }
+  }, [files]);
+
+  const handleFilesSelected = async (newFiles: DocumentFile[]) => {
+    setFiles(prev => [...prev, ...newFiles]);
   };
 
-  const removeFile = (id: string) => {
-    setFiles((prev) => prev.filter((file) => file.id !== id));
-    setResults(null);
+  const parseFiles = async () => {
+    setError(null);
+    setIsProcessing(true);
+    setProcessingProgress(0);
+    
+    try {
+      const totalFiles = files.length;
+      const parsed: (string | { image: File, text?: string })[] = [];
+      
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        try {
+          // Update progress
+          setProcessingProgress(Math.round((i / totalFiles) * 50)); // First 50% for parsing
+          
+          // Pass the DocumentFile object directly as expected by parseDocument
+          const parsedContent = await parseDocument(file);
+          parsed.push(parsedContent);
+          
+          // Update file status
+          setFiles(prev => 
+            prev.map(f => 
+              f.id === file.id ? { ...f, parsed: true } : f
+            )
+          );
+        } catch (err) {
+          console.error(`Error parsing file ${file.name}:`, err);
+          
+          // Update file with error
+          setFiles(prev => 
+            prev.map(f => 
+              f.id === file.id ? { ...f, parsed: false, parseError: 'Failed to parse' } : f
+            )
+          );
+          
+          // Add a placeholder for the failed file
+          parsed.push(`[Failed to parse ${file.name}]`);
+          
+          // Don't throw here - continue with other files
+        }
+      }
+      
+      setParsedDocuments(parsed);
+      return parsed;
+    } catch (err) {
+      console.error('Error parsing files:', err);
+      setError('Failed to parse one or more files. Please try again or use different files.');
+      throw err;
+    }
   };
 
-  const handleProcess = async () => {
-    if (files.length === 0) {
-      setError('Please upload at least one document');
+  const analyzeFiles = async (parsed: (string | { image: File, text?: string })[]) => {
+    try {
+      setProcessingProgress(50); // Parsing complete, now analyzing
+      
+      const result = await analyzeDocuments(parsed, comparisonType);
+      setComparisonResult(result);
+      setProcessingProgress(100);
+      return result;
+    } catch (err: any) {
+      console.error('Error analyzing files:', err);
+      setError(`Analysis failed: ${err.message || 'Unknown error occurred'}`);
+      throw err;
+    }
+  };
+
+  const handleCompare = async () => {
+    if (files.length < 2) {
+      setError('Please upload at least 2 files to compare');
       return;
     }
 
     setIsProcessing(true);
-    setProgress(0);
-    setResults(null);
     setError(null);
-    setProcessingStatus('Initializing document processing...');
-
-    // Set a timeout to show a message if processing takes too long
-    if (timeoutId) {
-      window.clearTimeout(timeoutId);
-    }
-
-    const newTimeoutId = window.setTimeout(() => {
-      setProcessingStatus('Processing is taking longer than expected. This might be due to large or complex documents. Please wait...');
-    }, 15000); // 15 seconds
-
-    setTimeoutId(newTimeoutId);
-
+    setComparisonResult(null);
+    
     try {
-      // Parse all documents in parallel
-      setProcessingStatus(`Processing ${files.length} documents in parallel...`);
-
-      // Create an array to hold the parsed documents in the correct order
-      const parsedDocuments: (string | { image: File, text?: string })[] = new Array(files.length);
-
-      // Create an array of promises for parallel processing
-      const parsePromises = files.map(async (file, index) => {
-        try {
-          setProgress(Math.round((index / files.length) * 25)); // Use first 25% of progress bar for starting processes
-
-          // For PDFs, use vision capabilities directly without attempting text extraction
-          if (file.type === 'pdf') {
-            setProcessingStatus(`Processing PDF: ${file.name} with Claude vision`);
-            const content = {
-              image: file.file,
-              text: `[PDF content from ${file.name} - Using Claude's vision capabilities to process this PDF]`
-            };
-
-            // Update file status for PDF
-            setFiles(prev => {
-              const updatedFiles = [...prev];
-              const fileIndex = updatedFiles.findIndex(f => f.id === file.id);
-              if (fileIndex !== -1) {
-                updatedFiles[fileIndex] = {
-                  ...updatedFiles[fileIndex],
-                  content: content.text,
-                  parsed: true
-                };
-              }
-              return updatedFiles;
-            });
-
-            // Store the result in the correct position
-            parsedDocuments[index] = content;
-            return { success: true, index };
-          }
-          // For other file types, use normal parsing
-          else {
-            setProcessingStatus(`Parsing: ${file.name}`);
-            const content = await parseDocument(file);
-
-            // Update file status
-            setFiles(prev => {
-              const updatedFiles = [...prev];
-              const fileIndex = updatedFiles.findIndex(f => f.id === file.id);
-              if (fileIndex !== -1) {
-                updatedFiles[fileIndex] = {
-                  ...updatedFiles[fileIndex],
-                  content: typeof content === 'string'
-                    ? content
-                    : content.text || 'Image file (will be processed by Claude vision)',
-                  parsed: true
-                };
-              }
-              return updatedFiles;
-            });
-
-            // Store the result in the correct position
-            parsedDocuments[index] = content;
-            return { success: true, index };
-          }
-        } catch (error) {
-          console.error(`Error parsing file ${file.name}:`, error);
-
-          // For non-PDF files that fail, mark as failed
-          if (file.type !== 'pdf') {
-            setFiles(prev => {
-              const updatedFiles = [...prev];
-              const fileIndex = updatedFiles.findIndex(f => f.id === file.id);
-              if (fileIndex !== -1) {
-                updatedFiles[fileIndex] = {
-                  ...updatedFiles[fileIndex],
-                  parsed: false,
-                  parseError: 'Failed to parse'
-                };
-              }
-              return updatedFiles;
-            });
-          }
-
-          return { success: false, index };
-        }
-      });
-
-      // Wait for all parsing operations to complete
-      setProcessingStatus('Waiting for all documents to be processed...');
-      await Promise.all(parsePromises);
-
-      // Filter out any failed parsing attempts
-      const validDocuments = parsedDocuments.filter(doc => doc !== undefined);
-
-      setProgress(50);
-      setProcessingStatus('All documents parsed. Preparing for analysis...');
-
-      if (validDocuments.length === 0) {
-        throw new Error('Could not parse any of the documents');
-      }
-
-      // Store parsed documents for reuse with caching
-      setParsedDocuments([...validDocuments]);
-
-      // Generate instructions based on comparison type
-      const instructions = prepareInstructions(comparisonType);
-
-      // Analyze documents
-      setProgress(75);
-      setProcessingStatus('Analyzing documents with Claude AI...');
-      const analysisResults = await analyzeDocuments(validDocuments, instructions, true);
-
-      setProgress(100);
-      setProcessingStatus('Analysis complete!');
-      setResults(analysisResults);
-
-      // Switch to results tab
-      setActiveTab('results');
-    } catch (error) {
-      console.error('Error processing documents:', error);
-      setError(error instanceof Error ? error.message : 'An unexpected error occurred');
+      const parsed = await parseFiles();
+      await analyzeFiles(parsed);
+    } catch (err) {
+      // Error already set in the respective functions
+      console.error('Comparison process failed:', err);
     } finally {
-      if (timeoutId) {
-        window.clearTimeout(timeoutId);
-        setTimeoutId(null);
-      }
       setIsProcessing(false);
+    }
+  };
+
+  const handleAskFollowUp = async () => {
+    if (!followUpQuestion.trim() || !comparisonResult) return;
+    
+    setIsAskingFollowUp(true);
+    setError(null);
+    
+    try {
+      // Prepare the follow-up instruction
+      const followUpInstruction = `
+        Based on the previous comparison of the documents, please answer the following question:
+        ${followUpQuestion}
+        
+        Provide a clear and concise answer based only on the content of the documents.
+      `;
+      
+      const result = await analyzeDocuments(parsedDocuments, followUpInstruction, false);
+      setComparisonResult(result);
+    } catch (err: any) {
+      console.error('Error asking follow-up:', err);
+      setError(`Failed to get answer: ${err.message || 'Unknown error occurred'}`);
+    } finally {
+      setIsAskingFollowUp(false);
+      setFollowUpQuestion('');
     }
   };
 
   const handleRetry = () => {
     setError(null);
+    setComparisonResult(null);
+    setProcessingProgress(0);
   };
 
-  // Handle follow-up questions using cached documents
-  const handleFollowUpQuestion = async () => {
-    if (!followUpQuestion.trim() || parsedDocuments.length === 0) return;
-
-    setIsAskingFollowUp(true);
+  const handleClearAll = () => {
+    setFiles([]);
+    setParsedDocuments([]);
+    setComparisonResult(null);
     setError(null);
-
-    try {
-      // Create a custom instruction with the follow-up question
-      const instruction = `Based on the previously analyzed documents, please answer this follow-up question: ${followUpQuestion}`;
-
-      // Use the cached documents to answer the follow-up question
-      const followUpResults = await analyzeDocuments(parsedDocuments, instruction, true);
-
-      // Update results with the new analysis
-      setResults(followUpResults);
-      setFollowUpQuestion('');
-    } catch (error) {
-      console.error('Error processing follow-up question:', error);
-      setError(error instanceof Error ? error.message : 'An unexpected error occurred');
-    } finally {
-      setIsAskingFollowUp(false);
-    }
+    setFollowUpQuestion('');
+    setProcessingProgress(0);
+    setDocumentNames([]);
   };
 
   return (
-    <div className="space-y-8">
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-2">
-          <TabsTrigger value="upload">Upload Documents</TabsTrigger>
-          <TabsTrigger value="results" disabled={!results}>Analysis Results</TabsTrigger>
-        </TabsList>
+    <div className="w-full max-w-6xl mx-auto space-y-8">
+      <div className="space-y-4">
+        <h2 className="text-2xl font-bold tracking-tight">Document Comparison</h2>
+        <p className="text-muted-foreground">
+          Upload documents to compare and analyze their content using AI.
+        </p>
+      </div>
 
-        <TabsContent value="upload" className="space-y-6 mt-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Document Comparison</CardTitle>
-              <CardDescription>
-                Upload documents to compare and analyze. Supported formats: PDF, Images, CSV, Excel, Word.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Comparison Type</label>
-                <Select
-                  value={comparisonType}
-                  onValueChange={setComparisonType}
-                  disabled={isProcessing}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select comparison type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="general">General Documents</SelectItem>
-                    <SelectItem value="contracts">Contracts</SelectItem>
-                    <SelectItem value="invoices">Invoices</SelectItem>
-                    <SelectItem value="packing-list">Packing Lists</SelectItem>
-                    <SelectItem value="bill-of-entry">Bills of Entry</SelectItem>
-                    <SelectItem value="resumes">Resumes</SelectItem>
-                    <SelectItem value="reports">Reports</SelectItem>
-                  </SelectContent>
-                </Select>
+      {!comparisonResult && (
+        <div className="space-y-6">
+          <FileUpload 
+            onFilesSelected={handleFilesSelected} 
+            disabled={isProcessing}
+            maxFiles={5}
+            maxFileSize={15 * 1024 * 1024} // 15MB
+          />
+
+          {files.length >= 2 && (
+            <div className="space-y-4">
+              <div className="flex flex-col sm:flex-row gap-3">
+                <div className="w-full sm:w-1/2">
+                  <label className="text-sm font-medium mb-1 block">Comparison Type</label>
+                  <select
+                    className="w-full p-2 border rounded-md bg-background"
+                    value={comparisonType}
+                    onChange={(e) => setComparisonType(e.target.value)}
+                    disabled={isProcessing}
+                  >
+                    <option value="verification">Verification</option>
+                    <option value="validation">Validation</option>
+                    <option value="review">Review</option>
+                    <option value="analysis">Analysis</option>
+                  </select>
+                </div>
               </div>
 
-              <FileUpload
-                onFilesSelected={handleFilesSelected}
-                disabled={isProcessing}
-              />
-
-              {files.length > 0 && (
-                <div>
-                  <h3 className="text-lg font-medium mb-3">Documents to Analyze</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                    {files.map((file) => (
-                      <div key={file.id}>
-                        <DocumentCard
-                          document={file}
-                          onClick={() => removeFile(file.id)}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {error && (
-                <ProcessingError message={error} onRetry={handleRetry} />
-              )}
-
               <div className="flex justify-end space-x-3">
-                <Button
-                  variant="outline"
-                  onClick={() => setFiles([])}
-                  disabled={files.length === 0 || isProcessing}
+                <Button 
+                  variant="outline" 
+                  onClick={handleClearAll}
+                  disabled={isProcessing}
                 >
                   Clear All
                 </Button>
-                <Button
-                  onClick={handleProcess}
-                  disabled={files.length === 0 || isProcessing}
-                  className="min-w-[120px]"
+                <Button 
+                  onClick={handleCompare}
+                  disabled={isProcessing || files.length < 2}
                 >
                   {isProcessing ? (
-                    <div className="flex items-center">
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    <div className="flex items-center space-x-2">
+                      <LoadingIndicator size="sm" />
                       <span>Processing...</span>
                     </div>
                   ) : (
-                    <div className="flex items-center">
-                      <Search className="mr-2 h-4 w-4" />
-                      <span>Analyze Documents</span>
-                    </div>
+                    'Compare Documents'
                   )}
                 </Button>
               </div>
-            </CardContent>
-          </Card>
-
-          {isProcessing && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">Processing Documents</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <Progress value={progress} className="mb-3" />
-                <div className="space-y-2">
-                  <p className="text-sm text-muted-foreground">
-                    {progress < 50
-                      ? `Parsing documents (${Math.min(Math.round(progress * 2), 100)}%)`
-                      : `Analyzing with Claude AI (${Math.min(Math.round((progress - 50) * 2), 100)}%)`
-                    }
-                  </p>
-                  {processingStatus && (
-                    <div className="bg-muted/50 p-3 rounded-md">
-                      <p className="text-sm">{processingStatus}</p>
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-        </TabsContent>
-
-        <TabsContent value="results" className="mt-6">
-          {results ? (
-            <>
-              <AnalysisResults results={results} />
-
-              {/* Follow-up question section */}
-              <Card className="mt-6">
-                <CardHeader>
-                  <CardTitle className="text-lg">Ask Follow-up Questions</CardTitle>
-                  <CardDescription>
-                    Ask additional questions about the documents without reprocessing them.
-                    This uses prompt caching for faster responses.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex items-center space-x-2">
-                    <input
-                      type="text"
-                      placeholder="Ask a follow-up question about these documents..."
-                      value={followUpQuestion}
-                      onChange={(e: { target: { value: string } }) => setFollowUpQuestion(e.target.value)}
-                      disabled={isAskingFollowUp}
-                      onKeyDown={(e: { key: string }) => e.key === 'Enter' && handleFollowUpQuestion()}
-                      className="flex-1 h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-base ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
-                    />
-                    <Button
-                      onClick={handleFollowUpQuestion}
-                      disabled={!followUpQuestion.trim() || isAskingFollowUp}
-                    >
-                      {isAskingFollowUp ? (
-                        <div className="flex items-center">
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          <span>Processing...</span>
-                        </div>
-                      ) : (
-                        <div className="flex items-center">
-                          <Send className="mr-2 h-4 w-4" />
-                          <span>Ask</span>
-                        </div>
-                      )}
-                    </Button>
-                  </div>
-                </CardContent>
-                <CardFooter className="text-xs text-muted-foreground">
-                  <p>Using prompt caching to efficiently reuse document content.</p>
-                </CardFooter>
-              </Card>
-            </>
-          ) : (
-            <div className="flex flex-col items-center justify-center py-12 text-center">
-              <Search className="h-12 w-12 text-muted-foreground mb-4" />
-              <h3 className="text-xl font-medium">No Analysis Results Yet</h3>
-              <p className="text-muted-foreground mt-2 max-w-md">
-                Upload and analyze documents to see the comparison results and insights here.
-              </p>
-              <Button
-                variant="outline"
-                className="mt-4"
-                onClick={() => setActiveTab('upload')}
-              >
-                <span>Go to Upload</span>
-              </Button>
             </div>
           )}
-        </TabsContent>
-      </Tabs>
+        </div>
+      )}
+
+      {isProcessing && (
+        <LoadingOverlay 
+          text={processingProgress < 50 ? "Parsing documents..." : "Analyzing with AI..."}
+          showProgress={true}
+          progress={processingProgress}
+        />
+      )}
+
+      {error && (
+        <div className="bg-destructive/10 border border-destructive rounded-md p-4">
+          <div className="flex items-start space-x-3">
+            <span className="text-destructive">⚠️</span>
+            <div className="space-y-2">
+              <p className="text-destructive font-medium">{error}</p>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={handleRetry}
+              >
+                Try Again
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {comparisonResult && !isProcessing && (
+        <div className="space-y-6 animate-in fade-in-50 duration-300">
+          <div className="flex justify-between items-center">
+            <h3 className="text-xl font-semibold">Results</h3>
+            <Button variant="outline" onClick={handleClearAll}>
+              New Comparison
+            </Button>
+          </div>
+
+          <ComparisonView result={comparisonResult} documentNames={documentNames} />
+
+          <div className="border rounded-md p-4 space-y-3">
+            <h4 className="font-medium">Ask a follow-up question</h4>
+            <div className="flex space-x-2">
+              <input
+                type="text"
+                className="flex-1 p-2 border rounded-md"
+                placeholder="E.g., What are the key differences in the shipping dates?"
+                value={followUpQuestion}
+                onChange={(e) => setFollowUpQuestion(e.target.value)}
+                disabled={isAskingFollowUp}
+              />
+              <Button 
+                onClick={handleAskFollowUp}
+                disabled={!followUpQuestion.trim() || isAskingFollowUp}
+              >
+                {isAskingFollowUp ? (
+                  <div className="flex items-center space-x-2">
+                    <LoadingIndicator size="sm" />
+                    <span>Asking...</span>
+                  </div>
+                ) : (
+                  'Ask'
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

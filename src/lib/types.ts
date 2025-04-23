@@ -1,6 +1,5 @@
-
 // Document and analysis related types
-export type DocumentType = 'pdf' | 'image' | 'csv' | 'excel' | 'doc' | 'unknown';
+export type DocumentType = 'pdf' | 'image' | 'csv' | 'excel' | 'doc' | 'txt' | 'unknown';
 
 export interface DocumentFile {
   id: string;

@@ -1,6 +1,6 @@
-
 import Anthropic from '@anthropic-ai/sdk';
 import { ComparisonResult, ComparisonTable } from '@/lib/types';
+import { callWithRetry, formatErrorMessage } from '@/utils/api-helpers';
 
 // Helper to convert a File object (image) to base64 and media type
 async function fileToBase64(file: File): Promise<{base64: string, mediaType: string}> {
@@ -8,9 +8,28 @@ async function fileToBase64(file: File): Promise<{base64: string, mediaType: str
     const reader = new FileReader();
     reader.onloadend = function () {
       const base64 = (reader.result as string).split(',')[1];
+      
+      // Get file type and ensure it's a supported media type for Claude API
+      let mediaType = file.type;
+      
+      // If mediaType is empty or not supported, determine from file extension or default to jpeg
+      if (!mediaType || !['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(mediaType)) {
+        const fileName = file.name.toLowerCase();
+        if (fileName.endsWith('.png')) {
+          mediaType = 'image/png';
+        } else if (fileName.endsWith('.gif')) {
+          mediaType = 'image/gif';
+        } else if (fileName.endsWith('.webp')) {
+          mediaType = 'image/webp';
+        } else {
+          // Default to jpeg for any other or unknown format
+          mediaType = 'image/jpeg';
+        }
+      }
+      
       resolve({
         base64,
-        mediaType: file.type || 'image/jpeg'
+        mediaType
       });
     };
     reader.onerror = reject;
@@ -28,6 +47,9 @@ export async function analyzeDocuments(
   const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY || '';
   if (!apiKey) throw new Error('Anthropic API key is missing.');
 
+  // Set request timeout (30 seconds)
+  const requestTimeout = 30000;
+
   const anthropic = new Anthropic({
     apiKey,
     dangerouslyAllowBrowser: true
@@ -37,68 +59,78 @@ export async function analyzeDocuments(
   let hasImage = documents.some(doc => typeof doc === 'object');
   let userContent: any[] = [];
 
-  if (hasImage) {
-    // Images + Text: each "doc" is either a string or { image, text? }
-    // Structure per Claude's vision/multimodal API
-    const multimodalContent = await Promise.all(
-      documents.map(async doc => {
-        if (typeof doc === 'string') {
-          // Just text (parsed contents of PDF, Word, etc)
-          return {
-            type: "text",
-            text: doc,
-            ...(useCache && { cache_control: { type: "ephemeral" } })
-          };
-        } else {
-          // Image (with base64)
-          const { base64, mediaType } = await fileToBase64(doc.image);
-          const imageContent = {
-            type: "image",
-            source: {
-              type: "base64",
-              media_type: mediaType,
-              data: base64,
-            },
-            ...(useCache && { cache_control: { type: "ephemeral" } })
-          };
-
-          // Add associated OCR text (if present from front-end parser)
-          if (doc.text) {
-            return [
-              imageContent,
-              {
-                type: "text",
-                text: doc.text,
-                ...(useCache && { cache_control: { type: "ephemeral" } })
-              }
-            ];
-          }
-
-          return imageContent;
-        }
-      })
-    );
-
-    // For multimodal content, we need to put everything in the user message
-    userContent = [
-      ...multimodalContent.flat(),
-      { type: "text", text: "\n\n" + instruction }
-    ];
-  } else {
-    // Text-only case - put documents in user message
-    const documentTexts = documents.map(doc =>
-      typeof doc === "string" ? doc : (doc.text || '')
-    ).join("\n\n---\n\n");
-
-    // Put documents and instruction in user message
-    userContent = [{
-      type: "text",
-      text: documentTexts + "\n\n" + instruction,
-      ...(useCache && { cache_control: { type: "ephemeral" } })
-    }];
-  }
-
   try {
+    if (hasImage) {
+      // Images + Text: each "doc" is either a string or { image, text? }
+      // Structure per Claude's vision/multimodal API
+      const multimodalContent = await Promise.all(
+        documents.map(async doc => {
+          if (typeof doc === 'string') {
+            // Just text (parsed contents of PDF, Word, etc)
+            return {
+              type: "text",
+              text: doc,
+              ...(useCache && { cache_control: { type: "ephemeral" } })
+            };
+          } else {
+            try {
+              // Image (with base64)
+              const { base64, mediaType } = await fileToBase64(doc.image);
+              const imageContent = {
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: mediaType,
+                  data: base64,
+                },
+                ...(useCache && { cache_control: { type: "ephemeral" } })
+              };
+
+              // Add associated OCR text (if present from front-end parser)
+              if (doc.text) {
+                return [
+                  imageContent,
+                  {
+                    type: "text",
+                    text: doc.text,
+                    ...(useCache && { cache_control: { type: "ephemeral" } })
+                  }
+                ];
+              }
+
+              return imageContent;
+            } catch (error) {
+              console.error('Error processing image:', error);
+              // Return a text fallback if image processing fails
+              return {
+                type: "text",
+                text: `[Failed to process image: ${doc.image.name}. Using text fallback if available: ${doc.text || 'No text available'}]`,
+                ...(useCache && { cache_control: { type: "ephemeral" } })
+              };
+            }
+          }
+        })
+      );
+
+      // For multimodal content, we need to put everything in the user message
+      userContent = [
+        ...multimodalContent.flat(),
+        { type: "text", text: "\n\n" + instruction }
+      ];
+    } else {
+      // Text-only case - put documents in user message
+      const documentTexts = documents.map(doc =>
+        typeof doc === "string" ? doc : (doc.text || '')
+      ).join("\n\n---\n\n");
+
+      // Put documents and instruction in user message
+      userContent = [{
+        type: "text",
+        text: documentTexts + "\n\n" + instruction,
+        ...(useCache && { cache_control: { type: "ephemeral" } })
+      }];
+    }
+
     // Get Claude model from environment variables or use default
     const claudeModel = import.meta.env.VITE_CLAUDE_MODEL || "claude-3-5-haiku-20241022";
 
@@ -112,17 +144,28 @@ export async function analyzeDocuments(
       - For each section of your analysis, first extract relevant quotes from the documents, then base your analysis on those quotes.`;
 
     // Claude API call with structured output format and caching
-    const response = await anthropic.messages.create({
-      model: claudeModel,
-      max_tokens: 10000,
-      system: systemMessage,
-      messages: [
-        {
-          role: "user",
-          content: userContent
-        }
-      ]
-    });
+    // Use retry mechanism for resilience
+    const response = await callWithRetry(
+      async () => {
+        const startTime = Date.now();
+        const response = await anthropic.messages.create({
+          model: claudeModel,
+          max_tokens: 10000,
+          system: systemMessage,
+          messages: [
+            {
+              role: "user",
+              content: userContent
+            }
+          ]
+        });
+        const endTime = Date.now();
+        console.log(`Claude API call took ${endTime - startTime}ms`);
+        return response;
+      },
+      3, // Max 3 retries
+      2000 // Base delay of 2 seconds
+    );
 
     // Log token usage to see cache effectiveness
     console.log('Token usage:', response.usage);
@@ -259,7 +302,20 @@ export async function analyzeDocuments(
     return result;
   } catch (error) {
     console.error('Error calling Claude API:', error);
-    throw new Error('Failed to analyze documents with Claude AI. Please try again.');
+    
+    // Provide more detailed error messages based on the error type
+    const errorMessage = formatErrorMessage(error);
+    
+    // Log detailed error for debugging
+    console.error('Detailed error:', {
+      message: errorMessage,
+      originalError: error,
+      documents: documents.map(doc => typeof doc === 'string' ? 'text document' : `image: ${doc.image.name}`),
+      hasImage,
+      modelUsed: import.meta.env.VITE_CLAUDE_MODEL || "claude-3-5-haiku-20241022"
+    });
+    
+    throw new Error(errorMessage);
   }
 }
 
@@ -316,5 +372,3 @@ Repeat this structure for EVERY section (Validation, Review, etc.). This format 
   const logiKey = comparisonType.toLowerCase().replace(/\s+/g, '-');
   return baseInstruction + (specific[logiKey] || '');
 }
-
-
