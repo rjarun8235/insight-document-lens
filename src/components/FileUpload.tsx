@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils';
 import { FileText, X, Upload, File, FileSpreadsheet, Image, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { v4 as uuidv4 } from 'uuid';
+import { uuidv4 } from '@/lib/uuid';
 
 interface FileUploadProps {
   onFilesSelected: (files: DocumentFile[]) => void;
