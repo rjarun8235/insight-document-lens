@@ -80,7 +80,9 @@ Once the analysis is complete, you'll be automatically taken to the "Analysis Re
 ## Technical Details
 
 - The application uses Claude 3.5 Haiku for document analysis
-- PDF processing leverages Claude's vision capabilities to understand both text and visual elements
+- PDF processing uses a dual approach:
+  - Primary method: Extract text using pdf.js library
+  - Fallback method: If text extraction fails, the PDF is processed using Claude's vision capabilities
 - Images are processed directly by Claude's vision system
 - CSV, Excel, and Word documents are parsed to extract text content
 - The application handles documents up to 32MB in size
@@ -102,9 +104,19 @@ Once the analysis is complete, you'll be automatically taken to the "Analysis Re
 
 If you encounter issues:
 
-1. **Document fails to parse** - Try a different file format or check if the file is corrupted
+1. **Document fails to parse** - The application will automatically try alternative parsing methods:
+   - For PDFs: If text extraction fails, the PDF will be processed as an image using Claude's vision capabilities
+   - If all parsing methods fail, try a different file format or check if the file is corrupted
+
 2. **Analysis takes too long** - Large or complex documents may take longer to process
+   - PDFs with many pages or complex layouts may require more processing time
+   - Consider splitting large documents into smaller parts
+
 3. **Missing information in results** - Try a different comparison type or check document quality
+   - Some document formats may not extract all information correctly
+   - Try uploading clearer or higher-quality versions of the documents
+
 4. **Error messages** - Note the specific error and try again with different documents
+   - If you see "Failed to parse" messages, the application will still attempt to process the document using fallback methods
 
 For additional help, contact support or refer to the documentation.

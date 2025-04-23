@@ -77,13 +77,17 @@ export const parseImage = async (file: File): Promise<{ image: File, text?: stri
 };
 
 // Parse PDF file using pdf.js
-export const parsePDF = async (file: File): Promise<string> => {
+export const parsePDF = async (file: File): Promise<string | { image: File, text?: string }> => {
   try {
     // Import pdf.js dynamically
     const pdfjs = await import('pdfjs-dist');
 
+    // Import the worker directly from node_modules
+    // This is a more reliable approach than using CDN
+    const pdfjsWorker = await import('pdfjs-dist/build/pdf.worker.entry');
+
     // Set the worker source
-    pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`;
+    pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorker;
 
     // Convert file to ArrayBuffer
     const arrayBuffer = await file.arrayBuffer();
@@ -106,7 +110,10 @@ export const parsePDF = async (file: File): Promise<string> => {
     return fullText;
   } catch (error) {
     console.error('Error parsing PDF:', error);
-    throw new Error(`Failed to parse PDF file: ${file.name}`);
+    console.log('Falling back to treating PDF as an image...');
+
+    // Fallback: Treat the PDF as an image to be processed by Claude's vision capabilities
+    return { image: file, text: `[PDF content from ${file.name} - Using Claude's vision capabilities to process this PDF]` };
   }
 };
 
@@ -137,6 +144,13 @@ export const parseDocument = async (documentFile: DocumentFile): Promise<string 
     }
   } catch (error) {
     console.error('Error parsing document:', error);
+
+    // If it's a PDF and parsing failed, try the fallback method of treating it as an image
+    if (type === 'pdf') {
+      console.log('Attempting fallback for PDF as image...');
+      return { image: file, text: `[PDF content from ${file.name} - Using Claude's vision capabilities to process this PDF]` };
+    }
+
     throw error;
   }
 };

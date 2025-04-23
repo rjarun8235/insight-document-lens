@@ -73,7 +73,13 @@ export function DocumentProcessor() {
           // Update file status
           setFiles(prev =>
             prev.map(f =>
-              f.id === file.id ? { ...f, content: typeof content === 'string' ? content : 'Image file', parsed: true } : f
+              f.id === file.id ? {
+                ...f,
+                content: typeof content === 'string'
+                  ? content
+                  : content.text || 'Image/PDF file (will be processed by Claude vision)',
+                parsed: true
+              } : f
             )
           );
         } catch (error) {
