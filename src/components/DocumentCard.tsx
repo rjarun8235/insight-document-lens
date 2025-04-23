@@ -1,7 +1,9 @@
+
 import { DocumentFile } from '@/lib/types';
-import { Card } from '@/components/ui/card';
+import { Card, CardContent, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/custom-button';
-import { FileText, CheckCircle, XCircle, Image, FileSpreadsheet, File, Loader2 } from 'lucide-react';
+import { Progress } from '@/components/ui/progress';
+import { FileText, CheckCircle, XCircle, RefreshCw, Image, FileSpreadsheet, File, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useState } from 'react';
 
@@ -129,16 +131,16 @@ export function DocumentCard({ document, onClick, onRetry, showPreview = true }:
   };
 
   return (
-    <div
-      className={`${cn(
+    <Card
+      className={cn(
         "transition-all hover:shadow-md",
         onClick && "cursor-pointer hover:scale-105"
-      )}`}
+      )}
       onClick={onClick}
     >
-      <div className="p-4">
+      <CardContent className="p-4">
         <div className="flex items-center space-x-3">
-          <div className={`${cn("flex-shrink-0", getStatusColor())}`}>
+          <div className={cn("flex-shrink-0", getStatusColor())}>
             {getFileIcon()}
           </div>
 
@@ -164,12 +166,7 @@ export function DocumentCard({ document, onClick, onRetry, showPreview = true }:
         {/* Show progress bar if parsing */}
         {isParsing && (
           <div className="mt-3">
-            <div className="relative h-1 w-full overflow-hidden rounded-full bg-secondary">
-              <div 
-                className="h-full w-full flex-1 bg-primary transition-all"
-                style={{ transform: `translateX(-${100 - (parseProgress || 0)}%)` }}
-              />
-            </div>
+            <Progress value={parseProgress} className="h-1" />
             <p className="text-xs text-muted-foreground mt-1">
               Parsing: {parseProgress}%
             </p>
@@ -178,11 +175,11 @@ export function DocumentCard({ document, onClick, onRetry, showPreview = true }:
 
         {/* Show preview if available */}
         {getPreviewText()}
-      </div>
+      </CardContent>
 
       {/* Show retry button if there was an error and onRetry is provided */}
       {parseError && onRetry && (
-        <div className="px-4 py-2 border-t">
+        <CardFooter className="px-4 py-2 border-t">
           <Button
             variant="outline"
             size="sm"
@@ -193,28 +190,12 @@ export function DocumentCard({ document, onClick, onRetry, showPreview = true }:
             }}
           >
             <div className="flex items-center">
-              <svg 
-                xmlns="http://www.w3.org/2000/svg" 
-                width="12" 
-                height="12" 
-                viewBox="0 0 24 24" 
-                fill="none" 
-                stroke="currentColor" 
-                strokeWidth="2" 
-                strokeLinecap="round" 
-                strokeLinejoin="round" 
-                className="h-3 w-3 mr-2"
-              >
-                <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
-                <path d="M21 3v5h-5" />
-                <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
-                <path d="M3 21v-5h5" />
-              </svg>
+              <RefreshCw className="h-3 w-3 mr-2" />
               <span>Retry</span>
             </div>
           </Button>
-        </div>
+        </CardFooter>
       )}
-    </div>
+    </Card>
   );
 }
