@@ -189,12 +189,10 @@ export function DocumentCard({ document, onClick, onRetry, showPreview = true }:
               onRetry(id);
             }}
           >
-            {/* Use a fragment to wrap the icon and text */}
-            <>
-              {/* @ts-ignore - Lucide icon is valid React node */}
+            <div className="flex items-center">
               <RefreshCw className="h-3 w-3 mr-2" />
-              Retry
-            </>
+              <span>Retry</span>
+            </div>
           </Button>
         </CardFooter>
       )}

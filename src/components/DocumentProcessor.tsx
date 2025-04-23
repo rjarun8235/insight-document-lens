@@ -1,9 +1,9 @@
 
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 import { DocumentFile, ComparisonResult } from '@/lib/types';
 import { parseDocument } from '@/lib/parsers';
 import { analyzeDocuments, prepareInstructions } from '@/services/claude-service';
-import { Button } from '@/components/ui/button';
+import { Button } from '@/components/ui/custom-button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { FileUpload } from './FileUpload';
 import { AnalysisResults } from './AnalysisResults';
@@ -18,9 +18,7 @@ import {
 } from '@/components/ui/select';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Loader2, Search, Send } from 'lucide-react';
-import { Input } from '@/components/ui/input';
 
 export function DocumentProcessor() {
   const [files, setFiles] = useState<DocumentFile[]>([]);
@@ -36,7 +34,7 @@ export function DocumentProcessor() {
   const [isAskingFollowUp, setIsAskingFollowUp] = useState(false);
 
   // Store parsed documents for reuse with caching
-  const parsedDocumentsRef = useRef<(string | { image: File, text?: string })[]>([]);
+  const [parsedDocuments, setParsedDocuments] = useState<(string | { image: File, text?: string })[]>([]);
 
   const handleFilesSelected = (newFiles: DocumentFile[]) => {
     setFiles((prev) => [...prev, ...newFiles]);
@@ -73,84 +71,107 @@ export function DocumentProcessor() {
     setTimeoutId(newTimeoutId);
 
     try {
-      // Parse all documents
-      const parsedDocuments: (string | { image: File, text?: string })[] = [];
+      // Parse all documents in parallel
+      setProcessingStatus(`Processing ${files.length} documents in parallel...`);
 
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        setProgress(Math.round((i / (files.length * 2)) * 100));
-        setProcessingStatus(`Parsing document ${i + 1} of ${files.length}: ${file.name}`);
+      // Create an array to hold the parsed documents in the correct order
+      const parsedDocuments: (string | { image: File, text?: string })[] = new Array(files.length);
 
-        // Set a timeout for each document parsing
-        const parseTimeoutPromise = new Promise((_, reject) => {
-          const timeout = window.setTimeout(() => {
-            reject(new Error(`Parsing timeout for ${file.name}. Trying fallback method...`));
-          }, 30000); // 30 seconds timeout per document
-          return () => clearTimeout(timeout);
-        });
-
+      // Create an array of promises for parallel processing
+      const parsePromises = files.map(async (file, index) => {
         try {
-          // Race between parsing and timeout
-          const content = await Promise.race([
-            parseDocument(file),
-            parseTimeoutPromise
-          ]) as (string | { image: File, text?: string });
+          setProgress(Math.round((index / files.length) * 25)); // Use first 25% of progress bar for starting processes
 
-          parsedDocuments.push(content);
-
-          // Update file status
-          setFiles(prev =>
-            prev.map(f =>
-              f.id === file.id ? {
-                ...f,
-                content: typeof content === 'string'
-                  ? content
-                  : content.text || 'Image/PDF file (will be processed by Claude vision)',
-                parsed: true
-              } : f
-            )
-          );
-        } catch (error) {
-          console.error(`Error parsing file ${file.name}:`, error);
-
-          // Try the fallback method directly for PDFs
+          // For PDFs, use vision capabilities directly without attempting text extraction
           if (file.type === 'pdf') {
-            setProcessingStatus(`Using vision fallback for ${file.name}`);
-            const fallbackContent = {
+            setProcessingStatus(`Processing PDF: ${file.name} with Claude vision`);
+            const content = {
               image: file.file,
               text: `[PDF content from ${file.name} - Using Claude's vision capabilities to process this PDF]`
             };
-            parsedDocuments.push(fallbackContent);
 
-            setFiles(prev =>
-              prev.map(f =>
-                f.id === file.id ? {
-                  ...f,
-                  content: fallbackContent.text,
-                  parsed: true,
-                  parseError: 'Using vision fallback'
-                } : f
-              )
-            );
-          } else {
-            setFiles(prev =>
-              prev.map(f =>
-                f.id === file.id ? { ...f, parsed: false, parseError: 'Failed to parse' } : f
-              )
-            );
+            // Update file status for PDF
+            setFiles(prev => {
+              const updatedFiles = [...prev];
+              const fileIndex = updatedFiles.findIndex(f => f.id === file.id);
+              if (fileIndex !== -1) {
+                updatedFiles[fileIndex] = {
+                  ...updatedFiles[fileIndex],
+                  content: content.text,
+                  parsed: true
+                };
+              }
+              return updatedFiles;
+            });
+
+            // Store the result in the correct position
+            parsedDocuments[index] = content;
+            return { success: true, index };
           }
+          // For other file types, use normal parsing
+          else {
+            setProcessingStatus(`Parsing: ${file.name}`);
+            const content = await parseDocument(file);
+
+            // Update file status
+            setFiles(prev => {
+              const updatedFiles = [...prev];
+              const fileIndex = updatedFiles.findIndex(f => f.id === file.id);
+              if (fileIndex !== -1) {
+                updatedFiles[fileIndex] = {
+                  ...updatedFiles[fileIndex],
+                  content: typeof content === 'string'
+                    ? content
+                    : content.text || 'Image file (will be processed by Claude vision)',
+                  parsed: true
+                };
+              }
+              return updatedFiles;
+            });
+
+            // Store the result in the correct position
+            parsedDocuments[index] = content;
+            return { success: true, index };
+          }
+        } catch (error) {
+          console.error(`Error parsing file ${file.name}:`, error);
+
+          // For non-PDF files that fail, mark as failed
+          if (file.type !== 'pdf') {
+            setFiles(prev => {
+              const updatedFiles = [...prev];
+              const fileIndex = updatedFiles.findIndex(f => f.id === file.id);
+              if (fileIndex !== -1) {
+                updatedFiles[fileIndex] = {
+                  ...updatedFiles[fileIndex],
+                  parsed: false,
+                  parseError: 'Failed to parse'
+                };
+              }
+              return updatedFiles;
+            });
+          }
+
+          return { success: false, index };
         }
-      }
+      });
+
+      // Wait for all parsing operations to complete
+      setProcessingStatus('Waiting for all documents to be processed...');
+      await Promise.all(parsePromises);
+
+      // Filter out any failed parsing attempts
+      const validDocuments = parsedDocuments.filter(doc => doc !== undefined);
 
       setProgress(50);
       setProcessingStatus('All documents parsed. Preparing for analysis...');
 
-      if (parsedDocuments.length === 0) {
+      if (validDocuments.length === 0) {
         throw new Error('Could not parse any of the documents');
       }
 
       // Store parsed documents for reuse with caching
-      parsedDocumentsRef.current = parsedDocuments;
+      setParsedDocuments([...validDocuments]);
 
       // Generate instructions based on comparison type
       const instructions = prepareInstructions(comparisonType);
@@ -158,7 +179,7 @@ export function DocumentProcessor() {
       // Analyze documents
       setProgress(75);
       setProcessingStatus('Analyzing documents with Claude AI...');
-      const analysisResults = await analyzeDocuments(parsedDocuments, instructions, true);
+      const analysisResults = await analyzeDocuments(validDocuments, instructions, true);
 
       setProgress(100);
       setProcessingStatus('Analysis complete!');
@@ -184,7 +205,7 @@ export function DocumentProcessor() {
 
   // Handle follow-up questions using cached documents
   const handleFollowUpQuestion = async () => {
-    if (!followUpQuestion.trim() || parsedDocumentsRef.current.length === 0) return;
+    if (!followUpQuestion.trim() || parsedDocuments.length === 0) return;
 
     setIsAskingFollowUp(true);
     setError(null);
@@ -194,7 +215,7 @@ export function DocumentProcessor() {
       const instruction = `Based on the previously analyzed documents, please answer this follow-up question: ${followUpQuestion}`;
 
       // Use the cached documents to answer the follow-up question
-      const followUpResults = await analyzeDocuments(parsedDocumentsRef.current, instruction, true);
+      const followUpResults = await analyzeDocuments(parsedDocuments, instruction, true);
 
       // Update results with the new analysis
       setResults(followUpResults);
@@ -256,11 +277,12 @@ export function DocumentProcessor() {
                   <h3 className="text-lg font-medium mb-3">Documents to Analyze</h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                     {files.map((file) => (
-                      <DocumentCard
-                        key={file.id}
-                        document={file}
-                        onClick={() => removeFile(file.id)}
-                      />
+                      <div key={file.id}>
+                        <DocumentCard
+                          document={file}
+                          onClick={() => removeFile(file.id)}
+                        />
+                      </div>
                     ))}
                   </div>
                 </div>
@@ -284,15 +306,15 @@ export function DocumentProcessor() {
                   className="min-w-[120px]"
                 >
                   {isProcessing ? (
-                    <>
+                    <div className="flex items-center">
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Processing...
-                    </>
+                      <span>Processing...</span>
+                    </div>
                   ) : (
-                    <>
+                    <div className="flex items-center">
                       <Search className="mr-2 h-4 w-4" />
-                      Analyze Documents
-                    </>
+                      <span>Analyze Documents</span>
+                    </div>
                   )}
                 </Button>
               </div>
@@ -340,28 +362,29 @@ export function DocumentProcessor() {
                 </CardHeader>
                 <CardContent>
                   <div className="flex items-center space-x-2">
-                    <Input
+                    <input
+                      type="text"
                       placeholder="Ask a follow-up question about these documents..."
                       value={followUpQuestion}
-                      onChange={(e) => setFollowUpQuestion(e.target.value)}
+                      onChange={(e: { target: { value: string } }) => setFollowUpQuestion(e.target.value)}
                       disabled={isAskingFollowUp}
-                      onKeyDown={(e) => e.key === 'Enter' && handleFollowUpQuestion()}
-                      className="flex-1"
+                      onKeyDown={(e: { key: string }) => e.key === 'Enter' && handleFollowUpQuestion()}
+                      className="flex-1 h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-base ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
                     />
                     <Button
                       onClick={handleFollowUpQuestion}
                       disabled={!followUpQuestion.trim() || isAskingFollowUp}
                     >
                       {isAskingFollowUp ? (
-                        <>
+                        <div className="flex items-center">
                           <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          Processing...
-                        </>
+                          <span>Processing...</span>
+                        </div>
                       ) : (
-                        <>
+                        <div className="flex items-center">
                           <Send className="mr-2 h-4 w-4" />
-                          Ask
-                        </>
+                          <span>Ask</span>
+                        </div>
                       )}
                     </Button>
                   </div>
@@ -383,7 +406,7 @@ export function DocumentProcessor() {
                 className="mt-4"
                 onClick={() => setActiveTab('upload')}
               >
-                Go to Upload
+                <span>Go to Upload</span>
               </Button>
             </div>
           )}

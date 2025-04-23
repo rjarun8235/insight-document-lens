@@ -28,7 +28,7 @@ export async function analyzeDocuments(
   const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY || '';
   if (!apiKey) throw new Error('Anthropic API key is missing.');
 
-  const anthropic = new Anthropic({ 
+  const anthropic = new Anthropic({
     apiKey,
     dangerouslyAllowBrowser: true
   });
@@ -129,10 +129,7 @@ export async function analyzeDocuments(
     const response = await anthropic.messages.create({
       model: claudeModel,
       max_tokens: 5000,
-      system: [
-        { type: "text", text: systemMessage },
-        ...systemContent
-      ],
+      system: systemMessage,
       messages: [
         {
           role: "user",

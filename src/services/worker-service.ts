@@ -94,11 +94,14 @@ class WorkerService {
             });
             break;
 
+          // PDF processing is now handled directly with Claude vision
           case 'pdf':
-            worker.postMessage({
-              type: 'PARSE_PDF',
-              payload: { fileData, fileId: document.id }
+            // Instead of processing in worker, use Claude vision directly
+            onComplete({
+              image: document.file,
+              text: `[PDF content from ${document.file.name} - Using Claude's vision capabilities to process this PDF]`
             });
+            this.terminateWorker(document.id);
             break;
 
           default:
