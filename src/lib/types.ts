@@ -1,13 +1,19 @@
-
 // Document and analysis related types
-export type DocumentType = 'pdf' | 'image' | 'csv' | 'excel' | 'doc' | 'unknown';
+export type DocumentType = 'pdf' | 'image' | 'csv' | 'excel' | 'doc' | 'txt' | 'unknown';
+
+// Interface for parsed document content
+export interface ParsedDocument {
+  image?: File;
+  text?: string;
+  documentType?: DocumentType;
+}
 
 export interface DocumentFile {
   id: string;
   name: string;
   type: DocumentType;
   file: File;
-  content?: string;
+  content?: ParsedDocument;
   parsed: boolean;
   parseError?: string;
   parseProgress?: number;

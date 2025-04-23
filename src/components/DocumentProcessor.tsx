@@ -1,417 +1,320 @@
-
-import { useState } from 'react';
-import { DocumentFile, ComparisonResult } from '@/lib/types';
-import { parseDocument } from '@/lib/parsers';
-import { analyzeDocuments, prepareInstructions } from '@/services/claude-service';
-import { Button } from '@/components/ui/custom-button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
+import { useState, useEffect } from 'react';
+import { DocumentFile, ComparisonResult, ParsedDocument } from '../lib/types';
 import { FileUpload } from './FileUpload';
-import { AnalysisResults } from './AnalysisResults';
-import { ProcessingError } from './ProcessingError';
-import { DocumentCard } from './DocumentCard';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { Progress } from '@/components/ui/progress';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Loader2, Search, Send } from 'lucide-react';
+import { parseDocument } from '../lib/parsers';
+import ClaudeService from '../services/claude-service';
+import { Button } from '../components/ui/custom-button';
+import { ComparisonView } from './ComparisonView';
+import { LoadingIndicator, LoadingOverlay } from './ui/loading-indicator';
+
+// Initialize the Claude service
+const claudeService = new ClaudeService();
 
 export function DocumentProcessor() {
   const [files, setFiles] = useState<DocumentFile[]>([]);
-  const [comparisonType, setComparisonType] = useState<string>('general');
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [processingStatus, setProcessingStatus] = useState<string>('');
-  const [timeoutId, setTimeoutId] = useState<number | null>(null);
-  const [results, setResults] = useState<ComparisonResult | null>(null);
+  const [parsedDocuments, setParsedDocuments] = useState<ParsedDocument[]>([]);
+  const [comparisonType, setComparisonType] = useState<string>('verification');
+  const [comparisonResult, setComparisonResult] = useState<ComparisonResult | null>(null);
+  const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<string>('upload');
   const [followUpQuestion, setFollowUpQuestion] = useState<string>('');
-  const [isAskingFollowUp, setIsAskingFollowUp] = useState(false);
+  const [isAskingFollowUp, setIsAskingFollowUp] = useState<boolean>(false);
+  const [processingProgress, setProcessingProgress] = useState<number>(0);
+  const [documentNames, setDocumentNames] = useState<string[]>([]);
+  const [tokenUsage, setTokenUsage] = useState<{input: number, output: number, cost: number} | null>(null);
 
-  // Store parsed documents for reuse with caching
-  const [parsedDocuments, setParsedDocuments] = useState<(string | { image: File, text?: string })[]>([]);
-
-  const handleFilesSelected = (newFiles: DocumentFile[]) => {
-    setFiles((prev) => [...prev, ...newFiles]);
-    setResults(null);
+  useEffect(() => {
+    // Reset state when files change
+    setParsedDocuments([]);
+    setComparisonResult(null);
     setError(null);
-  };
-
-  const removeFile = (id: string) => {
-    setFiles((prev) => prev.filter((file) => file.id !== id));
-    setResults(null);
-  };
-
-  const handleProcess = async () => {
-    if (files.length === 0) {
-      setError('Please upload at least one document');
-      return;
+    setFollowUpQuestion('');
+    setProcessingProgress(0);
+    
+    // Update document names for display in comparison view
+    if (files.length > 0) {
+      setDocumentNames(files.map(file => file.name));
     }
+  }, [files]);
 
+  const handleFilesSelected = async (newFiles: DocumentFile[]) => {
+    setFiles(prev => [...prev, ...newFiles]);
+  };
+
+  const parseFiles = async () => {
+    setError(null);
     setIsProcessing(true);
-    setProgress(0);
-    setResults(null);
-    setError(null);
-    setProcessingStatus('Initializing document processing...');
-
-    // Set a timeout to show a message if processing takes too long
-    if (timeoutId) {
-      window.clearTimeout(timeoutId);
-    }
-
-    const newTimeoutId = window.setTimeout(() => {
-      setProcessingStatus('Processing is taking longer than expected. This might be due to large or complex documents. Please wait...');
-    }, 15000); // 15 seconds
-
-    setTimeoutId(newTimeoutId);
-
+    setProcessingProgress(0);
+    
     try {
-      // Parse all documents in parallel
-      setProcessingStatus(`Processing ${files.length} documents in parallel...`);
-
-      // Create an array to hold the parsed documents in the correct order
-      const parsedDocuments: (string | { image: File, text?: string })[] = new Array(files.length);
-
-      // Create an array of promises for parallel processing
-      const parsePromises = files.map(async (file, index) => {
+      const totalFiles = files.length;
+      const parsed: ParsedDocument[] = [];
+      
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
         try {
-          setProgress(Math.round((index / files.length) * 25)); // Use first 25% of progress bar for starting processes
-
-          // For PDFs, use vision capabilities directly without attempting text extraction
-          if (file.type === 'pdf') {
-            setProcessingStatus(`Processing PDF: ${file.name} with Claude vision`);
-            const content = {
-              image: file.file,
-              text: `[PDF content from ${file.name} - Using Claude's vision capabilities to process this PDF]`
-            };
-
-            // Update file status for PDF
-            setFiles(prev => {
-              const updatedFiles = [...prev];
-              const fileIndex = updatedFiles.findIndex(f => f.id === file.id);
-              if (fileIndex !== -1) {
-                updatedFiles[fileIndex] = {
-                  ...updatedFiles[fileIndex],
-                  content: content.text,
-                  parsed: true
-                };
-              }
-              return updatedFiles;
-            });
-
-            // Store the result in the correct position
-            parsedDocuments[index] = content;
-            return { success: true, index };
-          }
-          // For other file types, use normal parsing
-          else {
-            setProcessingStatus(`Parsing: ${file.name}`);
-            const content = await parseDocument(file);
-
-            // Update file status
-            setFiles(prev => {
-              const updatedFiles = [...prev];
-              const fileIndex = updatedFiles.findIndex(f => f.id === file.id);
-              if (fileIndex !== -1) {
-                updatedFiles[fileIndex] = {
-                  ...updatedFiles[fileIndex],
-                  content: typeof content === 'string'
-                    ? content
-                    : content.text || 'Image file (will be processed by Claude vision)',
-                  parsed: true
-                };
-              }
-              return updatedFiles;
-            });
-
-            // Store the result in the correct position
-            parsedDocuments[index] = content;
-            return { success: true, index };
-          }
-        } catch (error) {
-          console.error(`Error parsing file ${file.name}:`, error);
-
-          // For non-PDF files that fail, mark as failed
-          if (file.type !== 'pdf') {
-            setFiles(prev => {
-              const updatedFiles = [...prev];
-              const fileIndex = updatedFiles.findIndex(f => f.id === file.id);
-              if (fileIndex !== -1) {
-                updatedFiles[fileIndex] = {
-                  ...updatedFiles[fileIndex],
-                  parsed: false,
-                  parseError: 'Failed to parse'
-                };
-              }
-              return updatedFiles;
-            });
-          }
-
-          return { success: false, index };
+          // Update the file's parsing status
+          setFiles(prev => prev.map(f => 
+            f.id === file.id ? { ...f, parsed: false, parseProgress: 0, parseError: undefined } : f
+          ));
+          
+          // Parse the document
+          const parsedContent: ParsedDocument = await parseDocument(file);
+          
+          // Add to parsed documents
+          parsed.push(parsedContent);
+          
+          // Update the file's status
+          setFiles(prev => prev.map(f => 
+            f.id === file.id ? { 
+              ...f, 
+              parsed: true, 
+              parseProgress: 100,
+              content: parsedContent,
+              preview: parsedContent.text || 'Document processed successfully'
+            } : f
+          ));
+          
+          // Update progress
+          setProcessingProgress(Math.round(((i + 1) / totalFiles) * 50)); // First 50% is parsing
+        } catch (err) {
+          console.error(`Error parsing file ${file.name}:`, err);
+          
+          // Update the file's error status
+          setFiles(prev => prev.map(f => 
+            f.id === file.id ? { ...f, parsed: false, parseError: err instanceof Error ? err.message : 'Unknown error' } : f
+          ));
+          
+          // Don't add to parsed documents
+          setError(`Error parsing file ${file.name}: ${err instanceof Error ? err.message : 'Unknown error'}`);
         }
-      });
-
-      // Wait for all parsing operations to complete
-      setProcessingStatus('Waiting for all documents to be processed...');
-      await Promise.all(parsePromises);
-
-      // Filter out any failed parsing attempts
-      const validDocuments = parsedDocuments.filter(doc => doc !== undefined);
-
-      setProgress(50);
-      setProcessingStatus('All documents parsed. Preparing for analysis...');
-
-      if (validDocuments.length === 0) {
-        throw new Error('Could not parse any of the documents');
       }
-
-      // Store parsed documents for reuse with caching
-      setParsedDocuments([...validDocuments]);
-
-      // Generate instructions based on comparison type
-      const instructions = prepareInstructions(comparisonType);
-
-      // Analyze documents
-      setProgress(75);
-      setProcessingStatus('Analyzing documents with Claude AI...');
-      const analysisResults = await analyzeDocuments(validDocuments, instructions, true);
-
-      setProgress(100);
-      setProcessingStatus('Analysis complete!');
-      setResults(analysisResults);
-
-      // Switch to results tab
-      setActiveTab('results');
-    } catch (error) {
-      console.error('Error processing documents:', error);
-      setError(error instanceof Error ? error.message : 'An unexpected error occurred');
+      
+      setParsedDocuments(parsed);
+      return parsed;
+    } catch (err) {
+      console.error('Error parsing files:', err);
+      setError(`Error parsing files: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      return [];
     } finally {
-      if (timeoutId) {
-        window.clearTimeout(timeoutId);
-        setTimeoutId(null);
-      }
       setIsProcessing(false);
     }
   };
 
-  const handleRetry = () => {
-    setError(null);
+  const analyzeFiles = async (parsed: ParsedDocument[]) => {
+    try {
+      setProcessingProgress(50); // Parsing complete, now analyzing
+      
+      // Get the comparison type instruction
+      const response = await claudeService.analyzeDocuments(parsed, getComparisonInstruction());
+      
+      // Extract the result and token usage
+      const { result, tokenUsage } = response;
+      
+      setComparisonResult(result);
+      setTokenUsage(tokenUsage);
+      setProcessingProgress(100);
+      return result;
+    } catch (err) {
+      console.error('Error analyzing files:', err);
+      setError(`Error analyzing files: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      throw err;
+    }
   };
 
-  // Handle follow-up questions using cached documents
-  const handleFollowUpQuestion = async () => {
-    if (!followUpQuestion.trim() || parsedDocuments.length === 0) return;
+  // Get the comparison instruction based on the selected type
+  const getComparisonInstruction = () => {
+    switch (comparisonType) {
+      case 'verification':
+        return 'Verify the accuracy and completeness of these documents. Identify any discrepancies or missing information.';
+      case 'validation':
+        return 'Validate these documents against standard requirements. Check for compliance with expected formats and required fields.';
+      case 'logistics':
+        return 'Compare these logistics documents (packing lists, invoices, bills of entry, etc.). Identify discrepancies in quantities, prices, dates, and other key information.';
+      case 'contracts':
+        return 'Compare these contract documents. Identify differences in terms, conditions, dates, parties involved, and obligations.';
+      case 'financial':
+        return 'Compare these financial documents. Identify differences in amounts, dates, accounts, and other financial details.';
+      default:
+        return 'Compare these documents and identify key differences and similarities.';
+    }
+  };
 
+  const handleCompare = async () => {
+    if (files.length < 1) {
+      setError('Please upload at least one document to analyze.');
+      return;
+    }
+    
+    setError(null);
+    setIsProcessing(true);
+    
+    try {
+      // First parse the files
+      const parsed = await parseFiles();
+      
+      if (parsed.length > 0) {
+        // Then analyze them
+        await analyzeFiles(parsed);
+      }
+    } catch (err) {
+      console.error('Comparison process failed:', err);
+      setError(`Comparison process failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleAskFollowUp = async () => {
+    if (!followUpQuestion.trim() || !comparisonResult) {
+      return;
+    }
+    
     setIsAskingFollowUp(true);
     setError(null);
-
+    
     try {
-      // Create a custom instruction with the follow-up question
-      const instruction = `Based on the previously analyzed documents, please answer this follow-up question: ${followUpQuestion}`;
-
-      // Use the cached documents to answer the follow-up question
-      const followUpResults = await analyzeDocuments(parsedDocuments, instruction, true);
-
-      // Update results with the new analysis
-      setResults(followUpResults);
+      // Create a new instruction with the follow-up question
+      const instruction = `Based on the previous comparison of documents, please answer this follow-up question: ${followUpQuestion}`;
+      
+      // Use the same documents but with the new instruction
+      const response = await claudeService.analyzeDocuments(parsedDocuments, instruction);
+      
+      // Extract the result and token usage
+      const { result, tokenUsage } = response;
+      
+      setComparisonResult(result);
+      setTokenUsage(tokenUsage);
       setFollowUpQuestion('');
-    } catch (error) {
-      console.error('Error processing follow-up question:', error);
-      setError(error instanceof Error ? error.message : 'An unexpected error occurred');
+    } catch (err) {
+      console.error('Error asking follow-up:', err);
+      setError(`Error asking follow-up: ${err instanceof Error ? err.message : 'Unknown error'}`);
     } finally {
       setIsAskingFollowUp(false);
     }
   };
 
   return (
-    <div className="space-y-8">
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-2">
-          <TabsTrigger value="upload">Upload Documents</TabsTrigger>
-          <TabsTrigger value="results" disabled={!results}>Analysis Results</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="upload" className="space-y-6 mt-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Document Comparison</CardTitle>
-              <CardDescription>
-                Upload documents to compare and analyze. Supported formats: PDF, Images, CSV, Excel, Word.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Comparison Type</label>
-                <Select
-                  value={comparisonType}
-                  onValueChange={setComparisonType}
-                  disabled={isProcessing}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select comparison type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="general">General Documents</SelectItem>
-                    <SelectItem value="contracts">Contracts</SelectItem>
-                    <SelectItem value="invoices">Invoices</SelectItem>
-                    <SelectItem value="packing-list">Packing Lists</SelectItem>
-                    <SelectItem value="bill-of-entry">Bills of Entry</SelectItem>
-                    <SelectItem value="resumes">Resumes</SelectItem>
-                    <SelectItem value="reports">Reports</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <FileUpload
-                onFilesSelected={handleFilesSelected}
-                disabled={isProcessing}
-              />
-
-              {files.length > 0 && (
+    <div className="document-processor space-y-8">
+      {/* File Upload Section */}
+      <div className="file-upload-section">
+        <FileUpload onFilesSelected={handleFilesSelected} />
+        
+        <div className="mt-4 space-y-2">
+          <h3 className="text-lg font-medium">Comparison Type</h3>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+            <Button
+              onClick={() => setComparisonType('verification')}
+              className={`${comparisonType === 'verification' ? 'bg-primary text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-800'}`}
+            >
+              Verification
+            </Button>
+            <Button
+              onClick={() => setComparisonType('validation')}
+              className={`${comparisonType === 'validation' ? 'bg-primary text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-800'}`}
+            >
+              Validation
+            </Button>
+            <Button
+              onClick={() => setComparisonType('logistics')}
+              className={`${comparisonType === 'logistics' ? 'bg-primary text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-800'}`}
+            >
+              Logistics
+            </Button>
+            <Button
+              onClick={() => setComparisonType('contracts')}
+              className={`${comparisonType === 'contracts' ? 'bg-primary text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-800'}`}
+            >
+              Contracts
+            </Button>
+            <Button
+              onClick={() => setComparisonType('financial')}
+              className={`${comparisonType === 'financial' ? 'bg-primary text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-800'}`}
+            >
+              Financial
+            </Button>
+          </div>
+        </div>
+        
+        <div className="mt-6">
+          <Button 
+            onClick={handleCompare}
+            disabled={isProcessing || files.length === 0}
+            className="w-full md:w-auto"
+          >
+            {isProcessing ? 'Processing...' : 'Compare Documents'}
+          </Button>
+        </div>
+      </div>
+      
+      {/* Processing Status */}
+      {isProcessing && (
+        <LoadingOverlay 
+          text={`Processing documents...`} 
+          showProgress={true}
+          progress={processingProgress} 
+        />
+      )}
+      
+      {/* Error Display */}
+      {error && (
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-md">
+          <p className="font-medium">Error</p>
+          <p>{error}</p>
+        </div>
+      )}
+      
+      {/* Results Display */}
+      {comparisonResult && (
+        <div className="results-section">
+          <ComparisonView result={comparisonResult} documentNames={documentNames} />
+          
+          {/* Token Usage Information */}
+          {tokenUsage && (
+            <div className="mt-4 p-3 bg-gray-50 border rounded-md text-sm">
+              <h4 className="font-medium mb-1">API Usage Information</h4>
+              <div className="grid grid-cols-3 gap-2">
                 <div>
-                  <h3 className="text-lg font-medium mb-3">Documents to Analyze</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                    {files.map((file) => (
-                      <div key={file.id}>
-                        <DocumentCard
-                          document={file}
-                          onClick={() => removeFile(file.id)}
-                        />
-                      </div>
-                    ))}
-                  </div>
+                  <p className="text-gray-600">Input Tokens</p>
+                  <p className="font-medium">{tokenUsage.input.toLocaleString()}</p>
                 </div>
-              )}
-
-              {error && (
-                <ProcessingError message={error} onRetry={handleRetry} />
-              )}
-
-              <div className="flex justify-end space-x-3">
-                <Button
-                  variant="outline"
-                  onClick={() => setFiles([])}
-                  disabled={files.length === 0 || isProcessing}
-                >
-                  Clear All
-                </Button>
-                <Button
-                  onClick={handleProcess}
-                  disabled={files.length === 0 || isProcessing}
-                  className="min-w-[120px]"
-                >
-                  {isProcessing ? (
-                    <div className="flex items-center">
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      <span>Processing...</span>
-                    </div>
-                  ) : (
-                    <div className="flex items-center">
-                      <Search className="mr-2 h-4 w-4" />
-                      <span>Analyze Documents</span>
-                    </div>
-                  )}
-                </Button>
+                <div>
+                  <p className="text-gray-600">Output Tokens</p>
+                  <p className="font-medium">{tokenUsage.output.toLocaleString()}</p>
+                </div>
+                <div>
+                  <p className="text-gray-600">Estimated Cost</p>
+                  <p className="font-medium">${tokenUsage.cost.toFixed(6)}</p>
+                </div>
               </div>
-            </CardContent>
-          </Card>
-
-          {isProcessing && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">Processing Documents</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <Progress value={progress} className="mb-3" />
-                <div className="space-y-2">
-                  <p className="text-sm text-muted-foreground">
-                    {progress < 50
-                      ? `Parsing documents (${Math.min(Math.round(progress * 2), 100)}%)`
-                      : `Analyzing with Claude AI (${Math.min(Math.round((progress - 50) * 2), 100)}%)`
-                    }
-                  </p>
-                  {processingStatus && (
-                    <div className="bg-muted/50 p-3 rounded-md">
-                      <p className="text-sm">{processingStatus}</p>
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-        </TabsContent>
-
-        <TabsContent value="results" className="mt-6">
-          {results ? (
-            <>
-              <AnalysisResults results={results} />
-
-              {/* Follow-up question section */}
-              <Card className="mt-6">
-                <CardHeader>
-                  <CardTitle className="text-lg">Ask Follow-up Questions</CardTitle>
-                  <CardDescription>
-                    Ask additional questions about the documents without reprocessing them.
-                    This uses prompt caching for faster responses.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex items-center space-x-2">
-                    <input
-                      type="text"
-                      placeholder="Ask a follow-up question about these documents..."
-                      value={followUpQuestion}
-                      onChange={(e: { target: { value: string } }) => setFollowUpQuestion(e.target.value)}
-                      disabled={isAskingFollowUp}
-                      onKeyDown={(e: { key: string }) => e.key === 'Enter' && handleFollowUpQuestion()}
-                      className="flex-1 h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-base ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
-                    />
-                    <Button
-                      onClick={handleFollowUpQuestion}
-                      disabled={!followUpQuestion.trim() || isAskingFollowUp}
-                    >
-                      {isAskingFollowUp ? (
-                        <div className="flex items-center">
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          <span>Processing...</span>
-                        </div>
-                      ) : (
-                        <div className="flex items-center">
-                          <Send className="mr-2 h-4 w-4" />
-                          <span>Ask</span>
-                        </div>
-                      )}
-                    </Button>
-                  </div>
-                </CardContent>
-                <CardFooter className="text-xs text-muted-foreground">
-                  <p>Using prompt caching to efficiently reuse document content.</p>
-                </CardFooter>
-              </Card>
-            </>
-          ) : (
-            <div className="flex flex-col items-center justify-center py-12 text-center">
-              <Search className="h-12 w-12 text-muted-foreground mb-4" />
-              <h3 className="text-xl font-medium">No Analysis Results Yet</h3>
-              <p className="text-muted-foreground mt-2 max-w-md">
-                Upload and analyze documents to see the comparison results and insights here.
+              <p className="text-xs text-gray-500 mt-2">
+                Cost estimate based on Claude 3.7 Sonnet pricing ($3 per million tokens).
               </p>
-              <Button
-                variant="outline"
-                className="mt-4"
-                onClick={() => setActiveTab('upload')}
-              >
-                <span>Go to Upload</span>
-              </Button>
             </div>
           )}
-        </TabsContent>
-      </Tabs>
+          
+          {/* Follow-up Question Section */}
+          <div className="mt-8 border-t pt-6">
+            <h3 className="text-lg font-medium mb-2">Ask a Follow-up Question</h3>
+            <div className="flex space-x-2">
+              <input
+                type="text"
+                value={followUpQuestion}
+                onChange={(e) => setFollowUpQuestion(e.target.value)}
+                placeholder="Ask a question about the comparison..."
+                className="flex-1 px-4 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                disabled={isAskingFollowUp}
+              />
+              <Button 
+                onClick={handleAskFollowUp}
+                disabled={!followUpQuestion.trim() || isAskingFollowUp}
+              >
+                {isAskingFollowUp ? <LoadingIndicator size="sm" /> : 'Ask'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

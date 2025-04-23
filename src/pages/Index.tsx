@@ -1,21 +1,12 @@
-
 import { DocumentProcessor } from '@/components/DocumentProcessor';
-import { FileText, Search, BookText, ClipboardCheck, FileCode, BookOpen, FileType } from 'lucide-react';
+import { Branding } from '@/components/ui/branding';
 
 const Index = () => {
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white shadow">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <div className="flex items-center">
-            <FileCode className="h-8 w-8 text-primary mr-3" />
-            <div>
-              <h1 className="text-3xl font-bold text-gray-900">Document Insight Lens</h1>
-              <p className="mt-1 text-sm text-gray-600">
-                Advanced document comparison and analysis powered by AI
-              </p>
-            </div>
-          </div>
+          <Branding size="lg" showTagline={true} />
         </div>
       </header>
       
@@ -28,17 +19,17 @@ const Index = () => {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
             <div className="bg-white p-6 rounded-lg shadow-sm hover:shadow-md transition-shadow">
               <div className="rounded-full bg-primary/10 w-12 h-12 flex items-center justify-center mb-4">
-                <FileText className="h-6 w-6 text-primary" />
+                <span className="text-xl text-primary">📄</span>
               </div>
               <h3 className="text-lg font-medium mb-2">Upload Documents</h3>
               <p className="text-gray-600">
-                Upload multiple documents in various formats including PDF, images, CSV, Excel, and Word documents.
+                Upload multiple documents in various formats including PDF, images, CSV, Excel, Word, and text files.
               </p>
             </div>
             
             <div className="bg-white p-6 rounded-lg shadow-sm hover:shadow-md transition-shadow">
               <div className="rounded-full bg-primary/10 w-12 h-12 flex items-center justify-center mb-4">
-                <BookOpen className="h-6 w-6 text-primary" />
+                <span className="text-xl text-primary">🔍</span>
               </div>
               <h3 className="text-lg font-medium mb-2">AI Analysis</h3>
               <p className="text-gray-600">
@@ -48,45 +39,61 @@ const Index = () => {
             
             <div className="bg-white p-6 rounded-lg shadow-sm hover:shadow-md transition-shadow">
               <div className="rounded-full bg-primary/10 w-12 h-12 flex items-center justify-center mb-4">
-                <ClipboardCheck className="h-6 w-6 text-primary" />
+                <span className="text-xl text-primary">✅</span>
               </div>
-              <h3 className="text-lg font-medium mb-2">Structured Insights</h3>
+              <h3 className="text-lg font-medium mb-2">Get Insights</h3>
               <p className="text-gray-600">
-                Receive detailed comparison tables and comprehensive analysis sections including verification, validation, and recommendations.
+                Receive detailed comparison results, highlighting differences and providing analysis, recommendations, and insights.
               </p>
             </div>
           </div>
         </div>
         
-        <div className="mt-16 border-t border-gray-200 pt-10">
-          <h2 className="text-2xl font-bold text-center mb-6">Document Types Supported</h2>
+        <div className="mt-16 border-t border-gray-200 pt-10 pb-16">
+          <h2 className="text-2xl font-bold text-center mb-6">Supported Document Types</h2>
+          <p className="text-center text-gray-600 max-w-3xl mx-auto mb-10">
+            DocLens supports a wide range of document formats to meet your comparison needs, 
+            with specialized capabilities for logistics documents like packing lists, invoices, and bills of entry.
+          </p>
           
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-center">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-4 max-w-4xl mx-auto">
             {[
-              { name: 'PDF Files', icon: FileText },
-              { name: 'Images', icon: FileCode },
-              { name: 'CSV Files', icon: FileType },
-              { name: 'Excel Files', icon: Search },
-              { name: 'Word Documents', icon: BookText },
-            ].map((item, index) => (
-              <div key={index} className="bg-white p-4 rounded-md shadow-sm">
-                <item.icon className="h-6 w-6 mx-auto mb-2 text-primary" />
-                <span className="text-sm font-medium">{item.name}</span>
+              { name: 'PDF', icon: '📄' },
+              { name: 'Images', icon: '🖼️' },
+              { name: 'CSV', icon: '📊' },
+              { name: 'Excel', icon: '📊' },
+              { name: 'Word', icon: '📝' },
+              { name: 'Text', icon: '📝' }
+            ].map((format, i) => (
+              <div key={i} className="bg-white p-4 rounded-lg shadow-sm text-center">
+                <div className="mx-auto rounded-full bg-primary/10 w-10 h-10 flex items-center justify-center mb-2">
+                  <span className="text-lg">{format.icon}</span>
+                </div>
+                <span className="text-sm font-medium">{format.name}</span>
               </div>
             ))}
           </div>
         </div>
       </main>
       
-      <footer className="bg-white border-t border-gray-200 mt-12">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <div className="text-center">
-            <p className="text-sm text-gray-500">
-              Document Insight Lens — Advanced document analysis powered by Claude AI
-            </p>
-            <p className="text-xs text-gray-400 mt-1">
-              Upload your documents for comparison, analysis, and insights
-            </p>
+      <footer className="bg-gray-800 text-white py-8">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex flex-col md:flex-row justify-between items-center">
+            <div className="mb-4 md:mb-0">
+              <Branding className="text-white" />
+              <p className="text-gray-400 text-sm mt-2"> 2023 TSV Global Solutions Pvt Limited. All rights reserved.</p>
+            </div>
+            <div className="flex space-x-6">
+              <a href="#" className="text-gray-400 hover:text-white transition-colors">
+                Privacy Policy
+              </a>
+              <a href="#" className="text-gray-400 hover:text-white transition-colors">
+                Terms of Service
+              </a>
+              <a href="#" className="text-gray-400 hover:text-white transition-colors">
+                Contact
+              </a>
+            </div>
           </div>
         </div>
       </footer>

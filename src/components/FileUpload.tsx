@@ -1,49 +1,71 @@
-
+import React from 'react';
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { DocumentFile, DocumentType } from '@/lib/types';
+import { DocumentFile, DocumentType, ParsedDocument } from '../lib/types';
 import { getDocumentType } from '@/lib/parsers';
 import { cn } from '@/lib/utils';
-import { FileText, X, Upload, File, FileSpreadsheet, Image, AlertCircle } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
+import { Button } from '@/components/ui/custom-button';
 import { uuidv4 } from '@/lib/uuid';
+
+// Constants for file upload limits
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+const FILES_PER_PAGE = 6;
 
 interface FileUploadProps {
   onFilesSelected: (files: DocumentFile[]) => void;
   disabled?: boolean;
   maxFiles?: number;
   showFileList?: boolean;
+  maxFileSize?: number;
 }
 
-// Helper function to get file type icon
+// Helper function to get file type icon element
 const getFileTypeIcon = (type: DocumentType) => {
   switch (type) {
     case 'pdf':
-      return <FileText className="h-6 w-6" />;
+      return <span className="h-6 w-6 flex items-center justify-center">📄</span>;
     case 'image':
-      return <Image className="h-6 w-6" />;
+      return <span className="h-6 w-6 flex items-center justify-center">🖼️</span>;
     case 'csv':
     case 'excel':
-      return <FileSpreadsheet className="h-6 w-6" />;
+      return <span className="h-6 w-6 flex items-center justify-center">📊</span>;
     case 'doc':
-      return <File className="h-6 w-6" />;
+    case 'txt' as DocumentType:
+      return <span className="h-6 w-6 flex items-center justify-center">📝</span>;
     default:
-      return <FileText className="h-6 w-6" />;
+      return <span className="h-6 w-6 flex items-center justify-center">📄</span>;
   }
+};
+
+// Helper to format file size
+const formatFileSize = (bytes: number): string => {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 };
 
 export function FileUpload({
   onFilesSelected,
   disabled = false,
   maxFiles = 10,
-  showFileList = true
+  showFileList = true,
+  maxFileSize = MAX_FILE_SIZE
 }: FileUploadProps) {
   const [files, setFiles] = useState<DocumentFile[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
   // Create a ref to access the file input element directly
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Calculate total pages
+  const totalPages = Math.ceil(files.length / FILES_PER_PAGE);
+  
+  // Get current page of files
+  const currentFiles = files.slice(
+    (currentPage - 1) * FILES_PER_PAGE, 
+    currentPage * FILES_PER_PAGE
+  );
 
   // Reset error when disabled state changes
   useEffect(() => {
@@ -52,9 +74,27 @@ export function FileUpload({
     }
   }, [disabled]);
 
+  // Reset to first page when files change
+  useEffect(() => {
+    if (files.length > 0 && currentPage > Math.ceil(files.length / FILES_PER_PAGE)) {
+      setCurrentPage(1);
+    }
+  }, [files, currentPage]);
+
   const onDrop = useCallback((acceptedFiles: File[]) => {
     // Clear any previous errors
     setError(null);
+
+    // Filter out files that exceed the size limit
+    const oversizedFiles = acceptedFiles.filter(file => file.size > maxFileSize);
+    if (oversizedFiles.length > 0) {
+      const fileNames = oversizedFiles.map(f => f.name).join(', ');
+      setError(`Files exceeding ${formatFileSize(maxFileSize)} limit: ${fileNames}`);
+      
+      // Remove oversized files from accepted files
+      acceptedFiles = acceptedFiles.filter(file => file.size <= maxFileSize);
+      if (acceptedFiles.length === 0) return;
+    }
 
     // Check if adding these files would exceed the maximum
     if (files.length + acceptedFiles.length > maxFiles) {
@@ -64,17 +104,44 @@ export function FileUpload({
       if (acceptedFiles.length === 0) return;
     }
 
+    // Check for image and PDF files that might be too large for Claude
+    const largeImageWarnings: string[] = [];
+    acceptedFiles.forEach(file => {
+      if (file.type.startsWith('image/')) {
+        if (file.size > 2 * 1024 * 1024) { // 2MB
+          largeImageWarnings.push(`${file.name} (${formatFileSize(file.size)}) may use significant tokens.`);
+        }
+      } else if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+        if (file.size > 10 * 1024 * 1024) { // 10MB
+          largeImageWarnings.push(`${file.name} (${formatFileSize(file.size)}) is a large PDF that may use significant tokens.`);
+        }
+      }
+    });
+
+    if (largeImageWarnings.length > 0) {
+      console.warn("Large file warnings:", largeImageWarnings);
+      // We don't block the upload, but we do warn the user
+      setError(`Note: ${largeImageWarnings.join(' ')} These files will be optimized automatically.`);
+    }
+
     const newDocumentFiles = acceptedFiles.map(file => ({
       id: uuidv4(),
       name: file.name,
       type: getDocumentType(file),
       file,
-      parsed: false
+      parsed: false,
+      content: { text: '', documentType: getDocumentType(file) } as ParsedDocument
     }));
 
     setFiles(prev => [...prev, ...newDocumentFiles]);
     onFilesSelected(newDocumentFiles);
-  }, [onFilesSelected, files.length, maxFiles]);
+    
+    // Navigate to the last page to show newly added files
+    setTimeout(() => {
+      const newTotalPages = Math.ceil((files.length + newDocumentFiles.length) / FILES_PER_PAGE);
+      setCurrentPage(newTotalPages);
+    }, 0);
+  }, [onFilesSelected, files.length, maxFiles, maxFileSize]);
 
   const { getRootProps, getInputProps, isDragActive, isDragAccept, isDragReject } = useDropzone({
     onDrop,
@@ -86,9 +153,11 @@ export function FileUpload({
       'application/vnd.ms-excel': ['.xls'],
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
       'application/msword': ['.doc'],
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx']
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
+      'text/plain': ['.txt', '.text']
     },
     maxFiles,
+    maxSize: maxFileSize,
     onDragEnter: () => setDragOver(true),
     onDragLeave: () => setDragOver(false),
     onDropAccepted: () => setDragOver(false),
@@ -102,11 +171,35 @@ export function FileUpload({
         });
         setError(errors[0]); // Just show the first error for simplicity
       }
-    }
+    },
+    multiple: true,
+    onDragOver: (event) => {
+      event.preventDefault();
+    },
+    noClick: false,
+    noKeyboard: false,
+    noDrag: false,
+    noDragEventsBubbling: false,
+    useFsAccessApi: false,
+    autoFocus: false,
+    preventDropOnDocument: true
   });
 
   const removeFile = (id: string) => {
     setFiles(prev => prev.filter(file => file.id !== id));
+  };
+
+  // Pagination controls
+  const goToNextPage = () => {
+    if (currentPage < totalPages) {
+      setCurrentPage(prev => prev + 1);
+    }
+  };
+
+  const goToPrevPage = () => {
+    if (currentPage > 1) {
+      setCurrentPage(prev => prev - 1);
+    }
   };
 
   return (
@@ -124,14 +217,14 @@ export function FileUpload({
         <input {...getInputProps()} ref={fileInputRef} />
         <div className="flex flex-col items-center justify-center space-y-3">
           {isDragReject ? (
-            <AlertCircle className="h-10 w-10 text-destructive animate-pulse" />
+            <span className="h-10 w-10 flex items-center justify-center text-destructive animate-pulse">⚠️</span>
           ) : isDragActive ? (
-            <Upload className="h-10 w-10 text-primary animate-bounce" />
+            <span className="h-10 w-10 flex items-center justify-center text-primary animate-bounce">⬆️</span>
           ) : (
             <div className="flex space-x-2">
-              <FileText className="h-8 w-8 text-muted-foreground" />
-              <Image className="h-8 w-8 text-muted-foreground" />
-              <FileSpreadsheet className="h-8 w-8 text-muted-foreground" />
+              <span className="h-8 w-8 flex items-center justify-center">📄</span>
+              <span className="h-8 w-8 flex items-center justify-center">🖼️</span>
+              <span className="h-8 w-8 flex items-center justify-center">📊</span>
             </div>
           )}
 
@@ -147,10 +240,10 @@ export function FileUpload({
 
           <div className="max-w-md">
             <p className="text-sm text-muted-foreground">
-              Supports PDF, images (JPG, PNG), CSV, Excel, and Word documents
+              Supports PDF, images (JPG, PNG), CSV, Excel, Word documents, and text files (TXT)
             </p>
             <p className="text-xs text-muted-foreground mt-1">
-              Maximum {maxFiles} files allowed
+              Maximum {maxFiles} files allowed, {formatFileSize(maxFileSize)} per file
             </p>
           </div>
 
@@ -175,7 +268,7 @@ export function FileUpload({
 
           {error && (
             <div className="text-sm text-destructive flex items-center mt-2">
-              <AlertCircle className="h-4 w-4 mr-1" />
+              <span className="h-4 w-4 mr-1 flex items-center justify-center">⚠️</span>
               {error}
             </div>
           )}
@@ -200,21 +293,21 @@ export function FileUpload({
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {files.map((file) => (
-              <Card
+            {currentFiles.map((file) => (
+              <div
                 key={file.id}
-                className="p-3 flex items-center justify-between hover:shadow-md transition-shadow duration-200"
+                className="border rounded-md p-3 flex items-center justify-between bg-background shadow-sm hover:shadow-md transition-shadow"
               >
-                <div className="flex items-center space-x-2">
-                  <div className="text-primary">
-                    {getFileTypeIcon(file.type)}
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium truncate max-w-[150px]" title={file.name}>
-                      {file.name}
-                    </p>
-                    <p className="text-xs text-muted-foreground uppercase">
-                      {file.type} · {Math.round(file.file.size / 1024)} KB
+                <div className="flex items-center space-x-3 overflow-hidden">
+                  {getFileTypeIcon(file.type)}
+                  <div className="overflow-hidden">
+                    <p className="text-sm font-medium truncate">{file.name}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {file.parsed
+                        ? "Parsed"
+                        : file.parseError
+                          ? file.parseError
+                          : "Ready for analysis"} • {formatFileSize(file.file.size)}
                     </p>
                   </div>
                 </div>
@@ -225,11 +318,38 @@ export function FileUpload({
                   className="h-8 w-8 opacity-50 hover:opacity-100 hover:bg-destructive/10 hover:text-destructive"
                   aria-label={`Remove ${file.name}`}
                 >
-                  <X className="h-4 w-4" />
+                  <span className="h-4 w-4 flex items-center justify-center">❌</span>
                 </Button>
-              </Card>
-            ))}
+              </div>
+             ))}
           </div>
+          
+          {/* Pagination controls */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-center space-x-2 mt-4">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={goToPrevPage}
+                disabled={currentPage === 1}
+                className="px-2 py-1"
+              >
+                <span>←</span>
+              </Button>
+              <span className="text-sm">
+                Page {currentPage} of {totalPages}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={goToNextPage}
+                disabled={currentPage === totalPages}
+                className="px-2 py-1"
+              >
+                <span>→</span>
+              </Button>
+            </div>
+          )}
         </div>
       )}
     </div>
