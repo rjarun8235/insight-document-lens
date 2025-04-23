@@ -1,10 +1,10 @@
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { DocumentFile, ComparisonResult } from '@/lib/types';
 import { parseDocument } from '@/lib/parsers';
 import { analyzeDocuments, prepareInstructions } from '@/services/claude-service';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { FileUpload } from './FileUpload';
 import { AnalysisResults } from './AnalysisResults';
 import { ProcessingError } from './ProcessingError';
@@ -19,7 +19,8 @@ import {
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Loader2, Search } from 'lucide-react';
+import { Loader2, Search, Send } from 'lucide-react';
+import { Input } from '@/components/ui/input';
 
 export function DocumentProcessor() {
   const [files, setFiles] = useState<DocumentFile[]>([]);
@@ -29,6 +30,11 @@ export function DocumentProcessor() {
   const [results, setResults] = useState<ComparisonResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<string>('upload');
+  const [followUpQuestion, setFollowUpQuestion] = useState<string>('');
+  const [isAskingFollowUp, setIsAskingFollowUp] = useState(false);
+
+  // Store parsed documents for reuse with caching
+  const parsedDocumentsRef = useRef<(string | { image: File, text?: string })[]>([]);
 
   const handleFilesSelected = (newFiles: DocumentFile[]) => {
     setFiles((prev) => [...prev, ...newFiles]);
@@ -54,26 +60,26 @@ export function DocumentProcessor() {
 
     try {
       // Parse all documents
-      const parsedDocuments: string[] = [];
-      
+      const parsedDocuments: (string | { image: File, text?: string })[] = [];
+
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
         setProgress(Math.round((i / (files.length * 2)) * 100));
-        
+
         try {
           const content = await parseDocument(file);
           parsedDocuments.push(content);
-          
+
           // Update file status
-          setFiles(prev => 
-            prev.map(f => 
-              f.id === file.id ? { ...f, content, parsed: true } : f
+          setFiles(prev =>
+            prev.map(f =>
+              f.id === file.id ? { ...f, content: typeof content === 'string' ? content : 'Image file', parsed: true } : f
             )
           );
         } catch (error) {
           console.error(`Error parsing file ${file.name}:`, error);
-          setFiles(prev => 
-            prev.map(f => 
+          setFiles(prev =>
+            prev.map(f =>
               f.id === file.id ? { ...f, parsed: false, parseError: 'Failed to parse' } : f
             )
           );
@@ -86,16 +92,19 @@ export function DocumentProcessor() {
         throw new Error('Could not parse any of the documents');
       }
 
+      // Store parsed documents for reuse with caching
+      parsedDocumentsRef.current = parsedDocuments;
+
       // Generate instructions based on comparison type
       const instructions = prepareInstructions(comparisonType);
-      
+
       // Analyze documents
       setProgress(75);
-      const analysisResults = await analyzeDocuments(parsedDocuments, instructions);
-      
+      const analysisResults = await analyzeDocuments(parsedDocuments, instructions, true);
+
       setProgress(100);
       setResults(analysisResults);
-      
+
       // Switch to results tab
       setActiveTab('results');
     } catch (error) {
@@ -110,6 +119,31 @@ export function DocumentProcessor() {
     setError(null);
   };
 
+  // Handle follow-up questions using cached documents
+  const handleFollowUpQuestion = async () => {
+    if (!followUpQuestion.trim() || parsedDocumentsRef.current.length === 0) return;
+
+    setIsAskingFollowUp(true);
+    setError(null);
+
+    try {
+      // Create a custom instruction with the follow-up question
+      const instruction = `Based on the previously analyzed documents, please answer this follow-up question: ${followUpQuestion}`;
+
+      // Use the cached documents to answer the follow-up question
+      const followUpResults = await analyzeDocuments(parsedDocumentsRef.current, instruction, true);
+
+      // Update results with the new analysis
+      setResults(followUpResults);
+      setFollowUpQuestion('');
+    } catch (error) {
+      console.error('Error processing follow-up question:', error);
+      setError(error instanceof Error ? error.message : 'An unexpected error occurred');
+    } finally {
+      setIsAskingFollowUp(false);
+    }
+  };
+
   return (
     <div className="space-y-8">
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
@@ -117,7 +151,7 @@ export function DocumentProcessor() {
           <TabsTrigger value="upload">Upload Documents</TabsTrigger>
           <TabsTrigger value="results" disabled={!results}>Analysis Results</TabsTrigger>
         </TabsList>
-        
+
         <TabsContent value="upload" className="space-y-6 mt-6">
           <Card>
             <CardHeader>
@@ -141,45 +175,47 @@ export function DocumentProcessor() {
                     <SelectItem value="general">General Documents</SelectItem>
                     <SelectItem value="contracts">Contracts</SelectItem>
                     <SelectItem value="invoices">Invoices</SelectItem>
+                    <SelectItem value="packing-list">Packing Lists</SelectItem>
+                    <SelectItem value="bill-of-entry">Bills of Entry</SelectItem>
                     <SelectItem value="resumes">Resumes</SelectItem>
                     <SelectItem value="reports">Reports</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
-              
-              <FileUpload 
+
+              <FileUpload
                 onFilesSelected={handleFilesSelected}
-                disabled={isProcessing} 
+                disabled={isProcessing}
               />
-              
+
               {files.length > 0 && (
                 <div>
                   <h3 className="text-lg font-medium mb-3">Documents to Analyze</h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                     {files.map((file) => (
-                      <DocumentCard 
-                        key={file.id} 
-                        document={file} 
+                      <DocumentCard
+                        key={file.id}
+                        document={file}
                         onClick={() => removeFile(file.id)}
                       />
                     ))}
                   </div>
                 </div>
               )}
-              
+
               {error && (
                 <ProcessingError message={error} onRetry={handleRetry} />
               )}
-              
+
               <div className="flex justify-end space-x-3">
-                <Button 
+                <Button
                   variant="outline"
                   onClick={() => setFiles([])}
                   disabled={files.length === 0 || isProcessing}
                 >
                   Clear All
                 </Button>
-                <Button 
+                <Button
                   onClick={handleProcess}
                   disabled={files.length === 0 || isProcessing}
                   className="min-w-[120px]"
@@ -208,7 +244,7 @@ export function DocumentProcessor() {
               <CardContent>
                 <Progress value={progress} className="mb-3" />
                 <p className="text-sm text-muted-foreground">
-                  {progress < 50 
+                  {progress < 50
                     ? `Parsing documents (${Math.min(Math.round(progress * 2), 100)}%)`
                     : `Analyzing with Claude AI (${Math.min(Math.round((progress - 50) * 2), 100)}%)`
                   }
@@ -217,10 +253,54 @@ export function DocumentProcessor() {
             </Card>
           )}
         </TabsContent>
-        
+
         <TabsContent value="results" className="mt-6">
           {results ? (
-            <AnalysisResults results={results} />
+            <>
+              <AnalysisResults results={results} />
+
+              {/* Follow-up question section */}
+              <Card className="mt-6">
+                <CardHeader>
+                  <CardTitle className="text-lg">Ask Follow-up Questions</CardTitle>
+                  <CardDescription>
+                    Ask additional questions about the documents without reprocessing them.
+                    This uses prompt caching for faster responses.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-center space-x-2">
+                    <Input
+                      placeholder="Ask a follow-up question about these documents..."
+                      value={followUpQuestion}
+                      onChange={(e) => setFollowUpQuestion(e.target.value)}
+                      disabled={isAskingFollowUp}
+                      onKeyDown={(e) => e.key === 'Enter' && handleFollowUpQuestion()}
+                      className="flex-1"
+                    />
+                    <Button
+                      onClick={handleFollowUpQuestion}
+                      disabled={!followUpQuestion.trim() || isAskingFollowUp}
+                    >
+                      {isAskingFollowUp ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Processing...
+                        </>
+                      ) : (
+                        <>
+                          <Send className="mr-2 h-4 w-4" />
+                          Ask
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                </CardContent>
+                <CardFooter className="text-xs text-muted-foreground">
+                  <p>Using prompt caching to efficiently reuse document content.</p>
+                </CardFooter>
+              </Card>
+            </>
           ) : (
             <div className="flex flex-col items-center justify-center py-12 text-center">
               <Search className="h-12 w-12 text-muted-foreground mb-4" />
@@ -228,8 +308,8 @@ export function DocumentProcessor() {
               <p className="text-muted-foreground mt-2 max-w-md">
                 Upload and analyze documents to see the comparison results and insights here.
               </p>
-              <Button 
-                variant="outline" 
+              <Button
+                variant="outline"
                 className="mt-4"
                 onClick={() => setActiveTab('upload')}
               >

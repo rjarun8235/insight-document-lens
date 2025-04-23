@@ -19,11 +19,11 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { 
-  BookText, 
-  FileText, 
-  FileType, 
-  ClipboardCheck, 
+import {
+  BookText,
+  FileText,
+  FileType,
+  ClipboardCheck,
   ClipboardList,
   Layers,
   Search,
@@ -92,8 +92,8 @@ export function AnalysisResults({ results }: AnalysisResultsProps) {
                         {table.rows.map((row, rowIndex) => (
                           <TableRow key={rowIndex} className={rowIndex % 2 === 0 ? "bg-muted/20" : ""}>
                             {row.map((cell, cellIndex) => (
-                              <TableCell 
-                                key={cellIndex} 
+                              <TableCell
+                                key={cellIndex}
                                 className={cellIndex === 0 ? "font-medium" : ""}
                               >
                                 {cell}
@@ -114,12 +114,12 @@ export function AnalysisResults({ results }: AnalysisResultsProps) {
               <FileText className="h-5 w-5 mr-2" />
               Analysis Sections
             </h3>
-            
+
             <Tabs defaultValue="summary" className="w-full">
               <TabsList className="grid grid-cols-3 md:grid-cols-4 lg:flex lg:flex-wrap">
                 {sections.map((section) => (
-                  <TabsTrigger 
-                    key={section.title.toLowerCase()} 
+                  <TabsTrigger
+                    key={section.title.toLowerCase()}
                     value={section.title.toLowerCase()}
                     className="flex items-center"
                   >
@@ -128,7 +128,7 @@ export function AnalysisResults({ results }: AnalysisResultsProps) {
                   </TabsTrigger>
                 ))}
               </TabsList>
-              
+
               {sections.map((section) => (
                 <TabsContent key={section.title.toLowerCase()} value={section.title.toLowerCase()}>
                   <Card>
@@ -140,7 +140,7 @@ export function AnalysisResults({ results }: AnalysisResultsProps) {
                         <div>
                           <CardTitle>{section.title}</CardTitle>
                           <CardDescription>
-                            {section.title === 'Summary' 
+                            {section.title === 'Summary'
                               ? 'High-level overview of the document comparison'
                               : `Detailed ${section.title.toLowerCase()} of the compared documents`
                             }
@@ -150,7 +150,39 @@ export function AnalysisResults({ results }: AnalysisResultsProps) {
                     </CardHeader>
                     <CardContent>
                       <div className="prose max-w-none">
-                        <p className="leading-relaxed">{section.content}</p>
+                        {section.content.includes('Quotes:') ? (
+                          <div>
+                            {section.content.split('\n\n').map((part, index) => {
+                              if (part.startsWith('Quotes:')) {
+                                return (
+                                  <div key={`quotes-${index}`} className="mb-4">
+                                    <h4 className="text-sm font-medium text-muted-foreground mb-2">Document References</h4>
+                                    <div className="bg-muted/30 p-3 rounded-md text-sm">
+                                      {part.replace('Quotes:', '').split('\n').map((quote, i) => (
+                                        <p key={`quote-${i}`} className="mb-1">{quote}</p>
+                                      ))}
+                                    </div>
+                                  </div>
+                                );
+                              } else if (part.startsWith('Analysis:')) {
+                                return (
+                                  <div key={`analysis-${index}`}>
+                                    <h4 className="text-sm font-medium text-muted-foreground mb-2">AI Analysis</h4>
+                                    <div>
+                                      {part.replace('Analysis:', '').split('\n').map((line, i) => (
+                                        <p key={`line-${i}`} className="mb-2">{line}</p>
+                                      ))}
+                                    </div>
+                                  </div>
+                                );
+                              } else {
+                                return <p key={`part-${index}`} className="leading-relaxed">{part}</p>;
+                              }
+                            })}
+                          </div>
+                        ) : (
+                          <p className="leading-relaxed">{section.content}</p>
+                        )}
                       </div>
                     </CardContent>
                     <CardFooter className="flex justify-end border-t pt-4">
