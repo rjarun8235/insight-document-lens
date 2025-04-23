@@ -1,15 +1,15 @@
 import { useState, useEffect } from 'react';
-import { DocumentFile, ComparisonResult } from '@/lib/types';
+import { DocumentFile, ComparisonResult, ParsedDocument } from '../lib/types';
 import { FileUpload } from './FileUpload';
-import { parseDocument } from '@/lib/parsers';
-import { analyzeDocuments } from '@/services/claude-service';
-import { Button } from '@/components/ui/custom-button';
+import { parseDocument } from '../lib/parsers';
+import { analyzeDocuments } from '../services/claude-service';
+import { Button } from '../components/ui/custom-button';
 import { ComparisonView } from './ComparisonView';
 import { LoadingIndicator, LoadingOverlay } from './ui/loading-indicator';
 
 export function DocumentProcessor() {
   const [files, setFiles] = useState<DocumentFile[]>([]);
-  const [parsedDocuments, setParsedDocuments] = useState<(string | { image: File, text?: string })[]>([]);
+  const [parsedDocuments, setParsedDocuments] = useState<ParsedDocument[]>([]);
   const [comparisonType, setComparisonType] = useState<string>('verification');
   const [comparisonResult, setComparisonResult] = useState<ComparisonResult | null>(null);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
@@ -18,6 +18,7 @@ export function DocumentProcessor() {
   const [isAskingFollowUp, setIsAskingFollowUp] = useState<boolean>(false);
   const [processingProgress, setProcessingProgress] = useState<number>(0);
   const [documentNames, setDocumentNames] = useState<string[]>([]);
+  const [tokenUsage, setTokenUsage] = useState<{input: number, output: number, cost: number} | null>(null);
 
   useEffect(() => {
     // Reset state when files change
@@ -44,38 +45,45 @@ export function DocumentProcessor() {
     
     try {
       const totalFiles = files.length;
-      const parsed: (string | { image: File, text?: string })[] = [];
+      const parsed: ParsedDocument[] = [];
       
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
         try {
-          // Update progress
-          setProcessingProgress(Math.round((i / totalFiles) * 50)); // First 50% for parsing
+          // Update the file's parsing status
+          setFiles(prev => prev.map(f => 
+            f.id === file.id ? { ...f, parsed: false, parseProgress: 0, parseError: undefined } : f
+          ));
           
-          // Pass the DocumentFile object directly as expected by parseDocument
-          const parsedContent = await parseDocument(file);
+          // Parse the document
+          const parsedContent: ParsedDocument = await parseDocument(file);
+          
+          // Add to parsed documents
           parsed.push(parsedContent);
           
-          // Update file status
-          setFiles(prev => 
-            prev.map(f => 
-              f.id === file.id ? { ...f, parsed: true } : f
-            )
-          );
+          // Update the file's status
+          setFiles(prev => prev.map(f => 
+            f.id === file.id ? { 
+              ...f, 
+              parsed: true, 
+              parseProgress: 100,
+              content: parsedContent,
+              preview: parsedContent.text || 'Document processed successfully'
+            } : f
+          ));
+          
+          // Update progress
+          setProcessingProgress(Math.round(((i + 1) / totalFiles) * 50)); // First 50% is parsing
         } catch (err) {
           console.error(`Error parsing file ${file.name}:`, err);
           
-          // Update file with error
-          setFiles(prev => 
-            prev.map(f => 
-              f.id === file.id ? { ...f, parsed: false, parseError: 'Failed to parse' } : f
-            )
-          );
+          // Update the file's error status
+          setFiles(prev => prev.map(f => 
+            f.id === file.id ? { ...f, parsed: false, parseError: err instanceof Error ? err.message : 'Unknown error' } : f
+          ));
           
-          // Add a placeholder for the failed file
-          parsed.push(`[Failed to parse ${file.name}]`);
-          
-          // Don't throw here - continue with other files
+          // Don't add to parsed documents
+          setError(`Error parsing file ${file.name}: ${err instanceof Error ? err.message : 'Unknown error'}`);
         }
       }
       
@@ -83,213 +91,222 @@ export function DocumentProcessor() {
       return parsed;
     } catch (err) {
       console.error('Error parsing files:', err);
-      setError('Failed to parse one or more files. Please try again or use different files.');
+      setError(`Error parsing files: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      return [];
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const analyzeFiles = async (parsed: ParsedDocument[]) => {
+    try {
+      setProcessingProgress(50); // Parsing complete, now analyzing
+      
+      // Get the comparison type instruction
+      const response = await analyzeDocuments(parsed, getComparisonInstruction());
+      
+      // Extract the result and token usage
+      const { result, tokenUsage } = response;
+      
+      setComparisonResult(result);
+      setTokenUsage(tokenUsage);
+      setProcessingProgress(100);
+      return result;
+    } catch (err) {
+      console.error('Error analyzing files:', err);
+      setError(`Error analyzing files: ${err instanceof Error ? err.message : 'Unknown error'}`);
       throw err;
     }
   };
 
-  const analyzeFiles = async (parsed: (string | { image: File, text?: string })[]) => {
-    try {
-      setProcessingProgress(50); // Parsing complete, now analyzing
-      
-      const result = await analyzeDocuments(parsed, comparisonType);
-      setComparisonResult(result);
-      setProcessingProgress(100);
-      return result;
-    } catch (err: any) {
-      console.error('Error analyzing files:', err);
-      setError(`Analysis failed: ${err.message || 'Unknown error occurred'}`);
-      throw err;
+  // Get the comparison instruction based on the selected type
+  const getComparisonInstruction = () => {
+    switch (comparisonType) {
+      case 'verification':
+        return 'Verify the accuracy and completeness of these documents. Identify any discrepancies or missing information.';
+      case 'validation':
+        return 'Validate these documents against standard requirements. Check for compliance with expected formats and required fields.';
+      case 'logistics':
+        return 'Compare these logistics documents (packing lists, invoices, bills of entry, etc.). Identify discrepancies in quantities, prices, dates, and other key information.';
+      case 'contracts':
+        return 'Compare these contract documents. Identify differences in terms, conditions, dates, parties involved, and obligations.';
+      case 'financial':
+        return 'Compare these financial documents. Identify differences in amounts, dates, accounts, and other financial details.';
+      default:
+        return 'Compare these documents and identify key differences and similarities.';
     }
   };
 
   const handleCompare = async () => {
-    if (files.length < 2) {
-      setError('Please upload at least 2 files to compare');
+    if (files.length < 1) {
+      setError('Please upload at least one document to analyze.');
       return;
     }
-
-    setIsProcessing(true);
+    
     setError(null);
-    setComparisonResult(null);
+    setIsProcessing(true);
     
     try {
+      // First parse the files
       const parsed = await parseFiles();
-      await analyzeFiles(parsed);
+      
+      if (parsed.length > 0) {
+        // Then analyze them
+        await analyzeFiles(parsed);
+      }
     } catch (err) {
-      // Error already set in the respective functions
       console.error('Comparison process failed:', err);
+      setError(`Comparison process failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
     } finally {
       setIsProcessing(false);
     }
   };
 
   const handleAskFollowUp = async () => {
-    if (!followUpQuestion.trim() || !comparisonResult) return;
+    if (!followUpQuestion.trim() || !comparisonResult) {
+      return;
+    }
     
     setIsAskingFollowUp(true);
     setError(null);
     
     try {
-      // Prepare the follow-up instruction
-      const followUpInstruction = `
-        Based on the previous comparison of the documents, please answer the following question:
-        ${followUpQuestion}
-        
-        Provide a clear and concise answer based only on the content of the documents.
-      `;
+      // Create a new instruction with the follow-up question
+      const instruction = `Based on the previous comparison of documents, please answer this follow-up question: ${followUpQuestion}`;
       
-      const result = await analyzeDocuments(parsedDocuments, followUpInstruction, false);
+      // Use the same documents but with the new instruction
+      const response = await analyzeDocuments(parsedDocuments, instruction);
+      
+      // Extract the result and token usage
+      const { result, tokenUsage } = response;
+      
       setComparisonResult(result);
-    } catch (err: any) {
+      setTokenUsage(tokenUsage);
+      setFollowUpQuestion('');
+    } catch (err) {
       console.error('Error asking follow-up:', err);
-      setError(`Failed to get answer: ${err.message || 'Unknown error occurred'}`);
+      setError(`Error asking follow-up: ${err instanceof Error ? err.message : 'Unknown error'}`);
     } finally {
       setIsAskingFollowUp(false);
-      setFollowUpQuestion('');
     }
   };
 
-  const handleRetry = () => {
-    setError(null);
-    setComparisonResult(null);
-    setProcessingProgress(0);
-  };
-
-  const handleClearAll = () => {
-    setFiles([]);
-    setParsedDocuments([]);
-    setComparisonResult(null);
-    setError(null);
-    setFollowUpQuestion('');
-    setProcessingProgress(0);
-    setDocumentNames([]);
-  };
-
   return (
-    <div className="w-full max-w-6xl mx-auto space-y-8">
-      <div className="space-y-4">
-        <h2 className="text-2xl font-bold tracking-tight">Document Comparison</h2>
-        <p className="text-muted-foreground">
-          Upload documents to compare and analyze their content using AI.
-        </p>
-      </div>
-
-      {!comparisonResult && (
-        <div className="space-y-6">
-          <FileUpload 
-            onFilesSelected={handleFilesSelected} 
-            disabled={isProcessing}
-            maxFiles={5}
-            maxFileSize={15 * 1024 * 1024} // 15MB
-          />
-
-          {files.length >= 2 && (
-            <div className="space-y-4">
-              <div className="flex flex-col sm:flex-row gap-3">
-                <div className="w-full sm:w-1/2">
-                  <label className="text-sm font-medium mb-1 block">Comparison Type</label>
-                  <select
-                    className="w-full p-2 border rounded-md bg-background"
-                    value={comparisonType}
-                    onChange={(e) => setComparisonType(e.target.value)}
-                    disabled={isProcessing}
-                  >
-                    <option value="verification">Verification</option>
-                    <option value="validation">Validation</option>
-                    <option value="review">Review</option>
-                    <option value="analysis">Analysis</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="flex justify-end space-x-3">
-                <Button 
-                  variant="outline" 
-                  onClick={handleClearAll}
-                  disabled={isProcessing}
-                >
-                  Clear All
-                </Button>
-                <Button 
-                  onClick={handleCompare}
-                  disabled={isProcessing || files.length < 2}
-                >
-                  {isProcessing ? (
-                    <div className="flex items-center space-x-2">
-                      <LoadingIndicator size="sm" />
-                      <span>Processing...</span>
-                    </div>
-                  ) : (
-                    'Compare Documents'
-                  )}
-                </Button>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {isProcessing && (
-        <LoadingOverlay 
-          text={processingProgress < 50 ? "Parsing documents..." : "Analyzing with AI..."}
-          showProgress={true}
-          progress={processingProgress}
-        />
-      )}
-
-      {error && (
-        <div className="bg-destructive/10 border border-destructive rounded-md p-4">
-          <div className="flex items-start space-x-3">
-            <span className="text-destructive">⚠️</span>
-            <div className="space-y-2">
-              <p className="text-destructive font-medium">{error}</p>
-              <Button 
-                variant="outline" 
-                size="sm" 
-                onClick={handleRetry}
-              >
-                Try Again
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {comparisonResult && !isProcessing && (
-        <div className="space-y-6 animate-in fade-in-50 duration-300">
-          <div className="flex justify-between items-center">
-            <h3 className="text-xl font-semibold">Results</h3>
-            <Button variant="outline" onClick={handleClearAll}>
-              New Comparison
+    <div className="document-processor space-y-8">
+      {/* File Upload Section */}
+      <div className="file-upload-section">
+        <FileUpload onFilesSelected={handleFilesSelected} />
+        
+        <div className="mt-4 space-y-2">
+          <h3 className="text-lg font-medium">Comparison Type</h3>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+            <Button
+              onClick={() => setComparisonType('verification')}
+              className={`${comparisonType === 'verification' ? 'bg-primary text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-800'}`}
+            >
+              Verification
+            </Button>
+            <Button
+              onClick={() => setComparisonType('validation')}
+              className={`${comparisonType === 'validation' ? 'bg-primary text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-800'}`}
+            >
+              Validation
+            </Button>
+            <Button
+              onClick={() => setComparisonType('logistics')}
+              className={`${comparisonType === 'logistics' ? 'bg-primary text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-800'}`}
+            >
+              Logistics
+            </Button>
+            <Button
+              onClick={() => setComparisonType('contracts')}
+              className={`${comparisonType === 'contracts' ? 'bg-primary text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-800'}`}
+            >
+              Contracts
+            </Button>
+            <Button
+              onClick={() => setComparisonType('financial')}
+              className={`${comparisonType === 'financial' ? 'bg-primary text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-800'}`}
+            >
+              Financial
             </Button>
           </div>
-
+        </div>
+        
+        <div className="mt-6">
+          <Button 
+            onClick={handleCompare}
+            disabled={isProcessing || files.length === 0}
+            className="w-full md:w-auto"
+          >
+            {isProcessing ? 'Processing...' : 'Compare Documents'}
+          </Button>
+        </div>
+      </div>
+      
+      {/* Processing Status */}
+      {isProcessing && (
+        <LoadingOverlay 
+          text={`Processing documents...`} 
+          showProgress={true}
+          progress={processingProgress} 
+        />
+      )}
+      
+      {/* Error Display */}
+      {error && (
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-md">
+          <p className="font-medium">Error</p>
+          <p>{error}</p>
+        </div>
+      )}
+      
+      {/* Results Display */}
+      {comparisonResult && (
+        <div className="results-section">
           <ComparisonView result={comparisonResult} documentNames={documentNames} />
-
-          <div className="border rounded-md p-4 space-y-3">
-            <h4 className="font-medium">Ask a follow-up question</h4>
+          
+          {/* Token Usage Information */}
+          {tokenUsage && (
+            <div className="mt-4 p-3 bg-gray-50 border rounded-md text-sm">
+              <h4 className="font-medium mb-1">API Usage Information</h4>
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <p className="text-gray-600">Input Tokens</p>
+                  <p className="font-medium">{tokenUsage.input.toLocaleString()}</p>
+                </div>
+                <div>
+                  <p className="text-gray-600">Output Tokens</p>
+                  <p className="font-medium">{tokenUsage.output.toLocaleString()}</p>
+                </div>
+                <div>
+                  <p className="text-gray-600">Estimated Cost</p>
+                  <p className="font-medium">${tokenUsage.cost.toFixed(6)}</p>
+                </div>
+              </div>
+              <p className="text-xs text-gray-500 mt-2">
+                Cost estimate based on Claude 3.7 Sonnet pricing ($3 per million tokens).
+              </p>
+            </div>
+          )}
+          
+          {/* Follow-up Question Section */}
+          <div className="mt-8 border-t pt-6">
+            <h3 className="text-lg font-medium mb-2">Ask a Follow-up Question</h3>
             <div className="flex space-x-2">
               <input
                 type="text"
-                className="flex-1 p-2 border rounded-md"
-                placeholder="E.g., What are the key differences in the shipping dates?"
                 value={followUpQuestion}
                 onChange={(e) => setFollowUpQuestion(e.target.value)}
+                placeholder="Ask a question about the comparison..."
+                className="flex-1 px-4 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
                 disabled={isAskingFollowUp}
               />
               <Button 
                 onClick={handleAskFollowUp}
                 disabled={!followUpQuestion.trim() || isAskingFollowUp}
               >
-                {isAskingFollowUp ? (
-                  <div className="flex items-center space-x-2">
-                    <LoadingIndicator size="sm" />
-                    <span>Asking...</span>
-                  </div>
-                ) : (
-                  'Ask'
-                )}
+                {isAskingFollowUp ? <LoadingIndicator size="sm" /> : 'Ask'}
               </Button>
             </div>
           </div>

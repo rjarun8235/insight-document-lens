@@ -83,11 +83,13 @@ export function LoadingIndicator({
  */
 export function LoadingOverlay({
   text = 'Loading...',
+  message,
   variant = 'primary',
   showProgress = false,
   progress = 0
 }: {
   text?: string;
+  message?: string;
   variant?: 'default' | 'primary' | 'secondary';
   showProgress?: boolean;
   progress?: number;
@@ -96,9 +98,9 @@ export function LoadingOverlay({
     <div className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center">
       <LoadingIndicator 
         size="lg" 
-        text={text} 
+        text={message || text} 
         variant={variant} 
-        showProgress={showProgress}
+        showProgress={showProgress || !!progress}
         progress={progress}
       />
     </div>

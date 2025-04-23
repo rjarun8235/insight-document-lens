@@ -1,7 +1,7 @@
 import React from 'react';
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { DocumentFile, DocumentType } from '@/lib/types';
+import { DocumentFile, DocumentType, ParsedDocument } from '../lib/types';
 import { getDocumentType } from '@/lib/parsers';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/custom-button';
@@ -104,12 +104,33 @@ export function FileUpload({
       if (acceptedFiles.length === 0) return;
     }
 
+    // Check for image and PDF files that might be too large for Claude
+    const largeImageWarnings: string[] = [];
+    acceptedFiles.forEach(file => {
+      if (file.type.startsWith('image/')) {
+        if (file.size > 2 * 1024 * 1024) { // 2MB
+          largeImageWarnings.push(`${file.name} (${formatFileSize(file.size)}) may use significant tokens.`);
+        }
+      } else if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+        if (file.size > 10 * 1024 * 1024) { // 10MB
+          largeImageWarnings.push(`${file.name} (${formatFileSize(file.size)}) is a large PDF that may use significant tokens.`);
+        }
+      }
+    });
+
+    if (largeImageWarnings.length > 0) {
+      console.warn("Large file warnings:", largeImageWarnings);
+      // We don't block the upload, but we do warn the user
+      setError(`Note: ${largeImageWarnings.join(' ')} These files will be optimized automatically.`);
+    }
+
     const newDocumentFiles = acceptedFiles.map(file => ({
       id: uuidv4(),
       name: file.name,
       type: getDocumentType(file),
       file,
-      parsed: false
+      parsed: false,
+      content: { text: '', documentType: getDocumentType(file) } as ParsedDocument
     }));
 
     setFiles(prev => [...prev, ...newDocumentFiles]);

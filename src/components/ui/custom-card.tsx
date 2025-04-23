@@ -1,18 +1,26 @@
 import React from 'react';
-import { Card as ShadcnCard } from './card';
+import { Card as ShadcnCard, CardContent as ShadcnCardContent, CardFooter as ShadcnCardFooter } from './card';
 
-// Define a simple interface for the Card props
-interface CardProps {
-  children: React.ReactNode;
-  className?: string;
-  [key: string]: any; // Allow any other props to be passed through
+// Simple wrapper components to fix the TypeScript errors with React 18's stricter type checking
+
+interface CardWrapperProps {
+  children?: React.ReactNode;
+  className?: string; 
+  onClick?: () => void;
+  [key: string]: any;
 }
 
-// This is a wrapper around the shadcn Card component that accepts React nodes as children
-export function Card(props: CardProps) {
-  return (
-    <ShadcnCard {...props}>
-      {props.children}
-    </ShadcnCard>
-  );
-}
+// Simple wrapper around the Card component
+export const Card: React.FC<CardWrapperProps> = ({ children, ...props }) => {
+  return <ShadcnCard {...props}>{children}</ShadcnCard>;
+};
+
+// Simple wrapper around the CardContent component
+export const CardContent: React.FC<CardWrapperProps> = ({ children, ...props }) => {
+  return <ShadcnCardContent {...props}>{children}</ShadcnCardContent>;
+};
+
+// Simple wrapper around the CardFooter component
+export const CardFooter: React.FC<CardWrapperProps> = ({ children, ...props }) => {
+  return <ShadcnCardFooter {...props}>{children}</ShadcnCardFooter>;
+};
