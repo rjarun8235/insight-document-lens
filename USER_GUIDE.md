@@ -80,11 +80,13 @@ Once the analysis is complete, you'll be automatically taken to the "Analysis Re
 ## Technical Details
 
 - The application uses Claude 3.5 Haiku for document analysis
-- PDF processing uses a multi-layered approach:
+- PDF processing uses a multi-layered approach with automatic fallbacks:
   - Primary method: Extract text using pdf.js library with a custom worker
   - Secondary method: Process PDF with worker disabled
-  - Tertiary method: Simple text extraction using FileReader
+  - Tertiary method: Simple text extraction using FileReader.readAsText
+  - Quaternary method: Data URL conversion using FileReader.readAsDataURL
   - Final fallback: If all text extraction methods fail, the PDF is processed using Claude's vision capabilities
+  - Each method automatically tries the next if it fails, with detailed progress reporting
 - Images are processed directly by Claude's vision system
 - CSV, Excel, and Word documents are parsed to extract text content
 - The application handles documents up to 32MB in size

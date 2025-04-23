@@ -1,8 +1,7 @@
 
 import { useState } from 'react';
-import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Download, Copy, Share2, Printer, Save } from 'lucide-react';
+import { Download, Copy, Printer, Save } from 'lucide-react';
 import { ComparisonResult } from '@/lib/types';
 
 interface ExportPanelProps {
@@ -45,6 +44,26 @@ export function ExportPanel({ results }: ExportPanelProps) {
     alert('Save report functionality would be implemented here in production');
   };
 
+  // Helper function to render a button with icon and text
+  const ExportButton = ({
+    icon,
+    label,
+    onClick
+  }: {
+    icon: any,
+    label: string,
+    onClick?: () => void
+  }) => (
+    <button
+      type="button"
+      className="flex flex-col items-center p-4 h-auto border rounded-md hover:bg-muted transition-colors"
+      onClick={onClick}
+    >
+      {icon}
+      <span className="text-xs mt-1">{label}</span>
+    </button>
+  );
+
   return (
     <Card>
       <CardHeader>
@@ -52,29 +71,28 @@ export function ExportPanel({ results }: ExportPanelProps) {
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <Button variant="outline" className="flex flex-col items-center p-4 h-auto" onClick={handleExportPDF}>
-            <Download className="h-5 w-5 mb-1" />
-            <span className="text-xs">Export PDF</span>
-          </Button>
-          
-          <Button 
-            variant="outline" 
-            className="flex flex-col items-center p-4 h-auto" 
+          <ExportButton
+            icon={<Download className="h-5 w-5" />}
+            label="Export PDF"
+            onClick={handleExportPDF}
+          />
+
+          <ExportButton
+            icon={<Copy className="h-5 w-5" />}
+            label={copied ? 'Copied!' : 'Copy Text'}
             onClick={handleCopyToClipboard}
-          >
-            <Copy className="h-5 w-5 mb-1" />
-            <span className="text-xs">{copied ? 'Copied!' : 'Copy Text'}</span>
-          </Button>
-          
-          <Button variant="outline" className="flex flex-col items-center p-4 h-auto">
-            <Printer className="h-5 w-5 mb-1" />
-            <span className="text-xs">Print Report</span>
-          </Button>
-          
-          <Button variant="outline" className="flex flex-col items-center p-4 h-auto" onClick={handleSaveReport}>
-            <Save className="h-5 w-5 mb-1" />
-            <span className="text-xs">Save Report</span>
-          </Button>
+          />
+
+          <ExportButton
+            icon={<Printer className="h-5 w-5" />}
+            label="Print Report"
+          />
+
+          <ExportButton
+            icon={<Save className="h-5 w-5" />}
+            label="Save Report"
+            onClick={handleSaveReport}
+          />
         </div>
       </CardContent>
     </Card>

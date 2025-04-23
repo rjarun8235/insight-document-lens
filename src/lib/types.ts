@@ -10,6 +10,9 @@ export interface DocumentFile {
   content?: string;
   parsed: boolean;
   parseError?: string;
+  parseProgress?: number;
+  preview?: string;
+  metadata?: any;
 }
 
 export interface ComparisonResult {

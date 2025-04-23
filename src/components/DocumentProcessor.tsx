@@ -27,6 +27,8 @@ export function DocumentProcessor() {
   const [comparisonType, setComparisonType] = useState<string>('general');
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [processingStatus, setProcessingStatus] = useState<string>('');
+  const [timeoutId, setTimeoutId] = useState<number | null>(null);
   const [results, setResults] = useState<ComparisonResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<string>('upload');
@@ -57,6 +59,18 @@ export function DocumentProcessor() {
     setProgress(0);
     setResults(null);
     setError(null);
+    setProcessingStatus('Initializing document processing...');
+
+    // Set a timeout to show a message if processing takes too long
+    if (timeoutId) {
+      window.clearTimeout(timeoutId);
+    }
+
+    const newTimeoutId = window.setTimeout(() => {
+      setProcessingStatus('Processing is taking longer than expected. This might be due to large or complex documents. Please wait...');
+    }, 15000); // 15 seconds
+
+    setTimeoutId(newTimeoutId);
 
     try {
       // Parse all documents
@@ -65,9 +79,23 @@ export function DocumentProcessor() {
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
         setProgress(Math.round((i / (files.length * 2)) * 100));
+        setProcessingStatus(`Parsing document ${i + 1} of ${files.length}: ${file.name}`);
+
+        // Set a timeout for each document parsing
+        const parseTimeoutPromise = new Promise((_, reject) => {
+          const timeout = window.setTimeout(() => {
+            reject(new Error(`Parsing timeout for ${file.name}. Trying fallback method...`));
+          }, 30000); // 30 seconds timeout per document
+          return () => clearTimeout(timeout);
+        });
 
         try {
-          const content = await parseDocument(file);
+          // Race between parsing and timeout
+          const content = await Promise.race([
+            parseDocument(file),
+            parseTimeoutPromise
+          ]) as (string | { image: File, text?: string });
+
           parsedDocuments.push(content);
 
           // Update file status
@@ -84,15 +112,38 @@ export function DocumentProcessor() {
           );
         } catch (error) {
           console.error(`Error parsing file ${file.name}:`, error);
-          setFiles(prev =>
-            prev.map(f =>
-              f.id === file.id ? { ...f, parsed: false, parseError: 'Failed to parse' } : f
-            )
-          );
+
+          // Try the fallback method directly for PDFs
+          if (file.type === 'pdf') {
+            setProcessingStatus(`Using vision fallback for ${file.name}`);
+            const fallbackContent = {
+              image: file.file,
+              text: `[PDF content from ${file.name} - Using Claude's vision capabilities to process this PDF]`
+            };
+            parsedDocuments.push(fallbackContent);
+
+            setFiles(prev =>
+              prev.map(f =>
+                f.id === file.id ? {
+                  ...f,
+                  content: fallbackContent.text,
+                  parsed: true,
+                  parseError: 'Using vision fallback'
+                } : f
+              )
+            );
+          } else {
+            setFiles(prev =>
+              prev.map(f =>
+                f.id === file.id ? { ...f, parsed: false, parseError: 'Failed to parse' } : f
+              )
+            );
+          }
         }
       }
 
       setProgress(50);
+      setProcessingStatus('All documents parsed. Preparing for analysis...');
 
       if (parsedDocuments.length === 0) {
         throw new Error('Could not parse any of the documents');
@@ -106,9 +157,11 @@ export function DocumentProcessor() {
 
       // Analyze documents
       setProgress(75);
+      setProcessingStatus('Analyzing documents with Claude AI...');
       const analysisResults = await analyzeDocuments(parsedDocuments, instructions, true);
 
       setProgress(100);
+      setProcessingStatus('Analysis complete!');
       setResults(analysisResults);
 
       // Switch to results tab
@@ -117,6 +170,10 @@ export function DocumentProcessor() {
       console.error('Error processing documents:', error);
       setError(error instanceof Error ? error.message : 'An unexpected error occurred');
     } finally {
+      if (timeoutId) {
+        window.clearTimeout(timeoutId);
+        setTimeoutId(null);
+      }
       setIsProcessing(false);
     }
   };
@@ -249,12 +306,19 @@ export function DocumentProcessor() {
               </CardHeader>
               <CardContent>
                 <Progress value={progress} className="mb-3" />
-                <p className="text-sm text-muted-foreground">
-                  {progress < 50
-                    ? `Parsing documents (${Math.min(Math.round(progress * 2), 100)}%)`
-                    : `Analyzing with Claude AI (${Math.min(Math.round((progress - 50) * 2), 100)}%)`
-                  }
-                </p>
+                <div className="space-y-2">
+                  <p className="text-sm text-muted-foreground">
+                    {progress < 50
+                      ? `Parsing documents (${Math.min(Math.round(progress * 2), 100)}%)`
+                      : `Analyzing with Claude AI (${Math.min(Math.round((progress - 50) * 2), 100)}%)`
+                    }
+                  </p>
+                  {processingStatus && (
+                    <div className="bg-muted/50 p-3 rounded-md">
+                      <p className="text-sm">{processingStatus}</p>
+                    </div>
+                  )}
+                </div>
               </CardContent>
             </Card>
           )}
