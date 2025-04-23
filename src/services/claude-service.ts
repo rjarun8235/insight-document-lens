@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import axios from 'axios';
 import { ComparisonResult, ComparisonTable, ParsedDocument } from '../lib/types';
 import { callWithRetry, formatErrorMessage } from '@/utils/api-helpers';
 
@@ -49,54 +50,51 @@ function getMockResponse(): ComparisonResult {
       rows: [
         ['Invoice Number', 'INV-2023-001', 'INV-2023-002'],
         ['Date', '2023-10-15', '2023-10-16'],
-        ['Amount', '$1,250.00', '$1,350.00'],
-        ['Supplier', 'ABC Logistics', 'ABC Logistics'],
-        ['Items', '5 items', '6 items']
+        ['Amount', '$1,200.00', '$1,500.00'],
+        ['Supplier', 'ABC Corp', 'ABC Corp'],
+        ['Items', '10 units of Product A', '15 units of Product A']
       ]
     }],
-    verification: "Quotes:\nDocument 1: \"Invoice #INV-2023-001 dated October 15, 2023\"\nDocument 2: \"Invoice #INV-2023-002 dated October 16, 2023\"\n\nAnalysis:\nBoth documents appear to be legitimate invoices with proper formatting and expected information. The invoice numbers follow the standard format and include dates that are sequential.",
-    validation: "Quotes:\nDocument 1: \"Total: $1,250.00 for 5 items\"\nDocument 2: \"Total: $1,350.00 for 6 items\"\n\nAnalysis:\nAll required fields are present in both documents. The calculations for totals match the line items. Each document contains the necessary information including invoice number, date, supplier details, item counts, and total amounts.",
-    review: "Quotes:\nDocument 1: \"Supplier: ABC Logistics\"\nDocument 2: \"Supplier: ABC Logistics\"\n\nAnalysis:\nBoth invoices follow standard formats with minor differences in content. They are from the same supplier but have different invoice numbers, dates, and amounts. The structure and formatting are consistent between both documents.",
-    analysis: "Quotes:\nDocument 1: \"5 items totaling $1,250.00\"\nDocument 2: \"6 items totaling $1,350.00\"\n\nAnalysis:\nThe invoices differ primarily in invoice number, date, and total amount. The supplier remains the same. Document 2 shows one additional item compared to Document 1, with a corresponding increase in the total amount of $100.00.",
-    summary: "Quotes:\nDocument 1: \"Invoice #INV-2023-001, ABC Logistics, $1,250.00\"\nDocument 2: \"Invoice #INV-2023-002, ABC Logistics, $1,350.00\"\n\nAnalysis:\nTwo sequential invoices from the same supplier (ABC Logistics) with different dates and amounts. The second invoice is for a slightly higher amount and includes one additional item compared to the first invoice.",
-    insights: "Quotes:\nDocument 1: \"5 items totaling $1,250.00\"\nDocument 2: \"6 items totaling $1,350.00\"\n\nAnalysis:\nThe second invoice shows a slight increase in both quantity (1 additional item) and total amount ($100.00 more) compared to the first. This suggests a consistent per-item cost of approximately $100 per item across both invoices.",
-    recommendations: "Quotes:\nBoth documents: \"Payment terms: Net 30\"\n\nAnalysis:\nThese invoices should be processed according to standard procedures. Given the consistent supplier and sequential nature, they appear to be part of regular business operations. The payment terms of Net 30 should be observed for both invoices.",
-    risks: "Quotes:\nNo specific risk indicators found in either document.\n\nAnalysis:\nNo significant risks identified in these documents. The invoices appear to be standard and consistent with expected business operations from a known supplier.",
-    issues: "Quotes:\nNo issue indicators found in either document.\n\nAnalysis:\nNo issues detected in the document comparison. Both invoices contain all required information and follow consistent formatting."
+    verification: "The documents appear to be valid invoices with consistent formatting.",
+    validation: "All required fields are present in both documents.",
+    review: "Both invoices follow standard formatting with minor differences in quantities and amounts.",
+    analysis: "The second invoice shows a 25% increase in both quantity and amount compared to the first invoice.",
+    summary: "Two invoices from the same supplier with different quantities and amounts.",
+    insights: "There appears to be a volume discount as the per-unit price remains consistent despite the increased quantity.",
+    recommendations: "Consider consolidating orders to take advantage of potential volume discounts.",
+    risks: "No significant risks identified in these standard invoices.",
+    issues: "No issues detected."
   };
 }
 
-// Main Claude analysis, for both images & text files, tailored for logistics docs and standard use
-export async function analyzeDocuments(
-  documents: ParsedDocument[],
-  instruction: string,
-  useCache: boolean = true
-): Promise<{result: ComparisonResult, tokenUsage: {input: number, output: number, cost: number}}> {
-  // Get Claude API Key
-  const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY || '';
-  if (!apiKey) throw new Error('Anthropic API key is missing.');
-
-  // Set request timeout (30 seconds)
-  const requestTimeout = 30000;
-
-  // Initialize Anthropic client with the latest SDK configuration
-  const anthropic = new Anthropic({
-    apiKey: apiKey.trim(), // Ensure no whitespace
-    dangerouslyAllowBrowser: true
-  });
-
-  // Compose multi-modal content for Claude (for text + image docs)
-  let hasImage = documents.some(doc => doc.image !== undefined);
-  let hasPDF = documents.some(doc => doc.documentType === 'pdf');
-  let userContent: any[] = [];
+// Claude API service
+export default class ClaudeService {
+  private anthropic: Anthropic;
+  private apiKey: string;
   
-  // Track estimated token usage for images
-  let estimatedImageTokens = 0;
-
-  try {
-    if (hasImage || hasPDF) {
-      // Images + Text: each "doc" is a ParsedDocument with image, text, and documentType
-      // Structure per Claude's vision/multimodal API
+  constructor() {
+    this.apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY || '';
+    this.anthropic = new Anthropic({
+      apiKey: this.apiKey,
+      dangerouslyAllowBrowser: true
+    });
+  }
+  
+  // Main Claude analysis, for both images & text files, tailored for logistics docs and standard use
+  async analyzeDocuments(
+    documents: ParsedDocument[],
+    instruction: string,
+    useCache: boolean = true
+  ): Promise<{result: ComparisonResult, tokenUsage: {input: number, output: number, cost: number}}> {
+    // Prepare content for Claude API
+    let userContent: any[] = [];
+    let estimatedImageTokens = 0;
+    
+    // Check if we have any images to process
+    const hasImages = documents.some(doc => doc.image);
+    
+    if (hasImages) {
+      // Handle multimodal content (images + text)
       const multimodalContent = await Promise.all(
         documents.map(async doc => {
           if (!doc.image && doc.text) {
@@ -320,8 +318,8 @@ Your analysis of issues based only on the quotes above.
             return { result: getMockResponse(), tokenUsage: { input: 0, output: 0, cost: 0 } };
           }
 
-          // Make the API call with proper error handling and caching
-          const response = await anthropic.messages.create({
+          // Create the request payload
+          const payload = {
             model: claudeModel,
             max_tokens: 4000,
             system: systemMessage,
@@ -331,16 +329,43 @@ Your analysis of issues based only on the quotes above.
                 content: userContent
               }
             ]
-          });
+          };
 
+          let responseData;
+
+          // Check if we're in a browser environment
+          const isBrowser = typeof window !== 'undefined';
+          
+          // In browser environments, we need to handle CORS issues
+          if (isBrowser) {
+            try {
+              // First try to use the SDK directly (will work in deployed environments where CORS is handled)
+              const response = await this.anthropic.messages.create(payload);
+              responseData = response;
+            } catch (error) {
+              // If direct SDK call fails due to CORS, fall back to mock data in development
+              if (import.meta.env.DEV) {
+                console.warn('API call failed, using mock data in development:', error);
+                return { result: getMockResponse(), tokenUsage: { input: 0, output: 0, cost: 0 } };
+              } else {
+                // In production, rethrow the error
+                throw error;
+              }
+            }
+          } else {
+            // In non-browser environments (Node.js), use the SDK directly
+            const response = await this.anthropic.messages.create(payload);
+            responseData = response;
+          }
+          
           // Log token usage to see cache effectiveness
-          console.log('Token usage:', response.usage);
+          console.log('Token usage:', responseData.usage);
           
           // Log the first 500 characters of the response for debugging
-          console.log('Response preview:', response.content[0].text.substring(0, 500) + '...');
+          console.log('Response preview:', responseData.content[0].text.substring(0, 500) + '...');
 
           // Get the response text
-          const responseText = response.content[0].text;
+          const responseText = responseData.content[0].text;
 
           // Check if we got a valid response
           if (!responseText || responseText.trim().length < 100) {
@@ -450,8 +475,8 @@ Your analysis of issues based only on the quotes above.
 
             // Try simple label format (Verification:)
             const labelRegex = new RegExp(
-              `${key.charAt(0).toUpperCase() + key.slice(1)}[:\\s]+(.*?)(?=\\n\\s*\\n|\\n\\s*[A-Z]|$)`,
-              'is'
+              `${key.charAt(0).toUpperCase() + key.slice(1)}:\\s*([\\s\\S]*?)(?=\\n[A-Z][a-z]+:|$)`,
+              'i'
             );
 
             const labelMatch = responseText.match(labelRegex);
@@ -460,119 +485,80 @@ Your analysis of issues based only on the quotes above.
               result[key] = labelMatch[1].trim();
               return; // Section found, move to next
             }
-
-            // Default if no match found
-            result[key] = `No ${key} information provided.`;
           });
 
-          // Calculate token usage cost
-          const tokenUsage = {
-            input: response.usage.input_tokens,
-            output: response.usage.output_tokens,
-            cost: (response.usage.input_tokens + response.usage.output_tokens) * 3 / 1000000 // $3 per million tokens
-          };
-
-          return { result, tokenUsage };
-        } catch (error: any) {
-          console.error('Error calling Claude API:', error);
-          
-          // Check for network/CORS errors
-          if (error.name === 'TypeError' && error.message.includes('Failed to fetch')) {
-            console.error('Network error detected - likely a CORS issue');
-            
-            // In development, fall back to mock data
-            if (import.meta.env.DEV) {
-              console.warn('Using mock data due to network error in development');
-              return { result: getMockResponse(), tokenUsage: { input: 0, output: 0, cost: 0 } };
+          // Return the result and token usage
+          return { 
+            result, 
+            tokenUsage: {
+              input: responseData.usage.input_tokens + estimatedImageTokens,
+              output: responseData.usage.output_tokens,
+              cost: ((responseData.usage.input_tokens + estimatedImageTokens) * 3 + responseData.usage.output_tokens * 15) / 1000000 // $3 per million input tokens, $15 per million output tokens
             }
-          }
-          
-          // Provide more detailed error messages based on the error type
-          const errorMessage = formatErrorMessage(error);
-          
-          // Log detailed error for debugging
-          console.error('Detailed error:', {
-            message: errorMessage,
-            originalError: error,
-            documents: documents.map(doc => `image: ${doc.image?.name || 'No image'}`),
-            hasImage,
-            modelUsed: claudeModel
-          });
-          
-          throw new Error(errorMessage);
+          };
+        } catch (error) {
+          console.error('Error calling Claude API:', error);
+          throw new Error(formatErrorMessage(error));
         }
-      }, 3, 2000);
+      }, 3); // Retry up to 3 times
     } catch (error) {
-      // If all retries failed and we're in development, use mock data
-      if (import.meta.env.DEV) {
-        console.warn('All retries failed, using mock data in development');
-        return { result: getMockResponse(), tokenUsage: { input: 0, output: 0, cost: 0 } };
-      }
-      throw error;
+      console.error('Error preparing documents:', error);
+      throw new Error('Failed to prepare documents for analysis.');
     }
-  } catch (error) {
-    console.error('Error preparing documents:', error);
-    
-    // In development, fall back to mock data
-    if (import.meta.env.DEV) {
-      console.warn('Using mock data due to document preparation error in development');
-      return { result: getMockResponse(), tokenUsage: { input: 0, output: 0, cost: 0 } };
-    }
-    
-    throw new Error('Failed to prepare documents for analysis.');
   }
-}
 
-// Instruction builder for various doc types (esp. logistics: packing-list, invoice, bill-of-entry)
-export function prepareInstructions(comparisonType: string): string {
-  const baseInstruction = `
-Carefully analyze and compare the uploaded documents.
+  // Instruction builder for various doc types (esp. logistics: packing-list, invoice, bill-of-entry)
+  prepareInstructions(comparisonType: string): string {
+    // Default instruction for general document comparison
+    let instruction = `Please analyze these documents and provide a detailed comparison. Extract key information into a comparison table, then provide analysis in the required sections.`;
+    
+    // Customize instructions based on document type
+    switch (comparisonType.toLowerCase()) {
+      case 'invoice':
+        instruction = `Please analyze these invoices and provide a detailed comparison. 
+        
+Extract key information such as:
+- Invoice numbers and dates
+- Buyer and seller information
+- Item descriptions, quantities, and prices
+- Total amounts and payment terms
+- Tax information
+- Shipping details
 
-Your output MUST include:
-1. First, create a structured comparison table with key fields from the documents using markdown tables
-2. Then provide ALL of the following sections in this exact order:
-   - Verification - Verify if the documents are consistent with each other
-   - Validation - Validate if the documents meet standard requirements
-   - Review - Provide a detailed review of the documents
-   - Analysis - Analyze the content and identify patterns or discrepancies
-   - Summary - Summarize the key points from all documents
-   - Insights - Provide insights that might not be immediately obvious
-   - Recommendations - Suggest actions based on the document analysis
-   - Risks - Identify potential risks or issues
-   - Issues - List any problems found in the documents
+Organize this information into a comparison table, then provide analysis in the required sections.`;
+        break;
+        
+      case 'packing-list':
+        instruction = `Please analyze these packing lists and provide a detailed comparison. 
+        
+Extract key information such as:
+- Shipment references and dates
+- Consignee and shipper information
+- Item descriptions, quantities, weights, and dimensions
+- Package counts and types
+- Special handling instructions
+- Total gross and net weights
 
-For tables, extract and compare all major values (dates, IDs, totals, etc). Make sure to align corresponding fields from different documents.
+Organize this information into a comparison table, then provide analysis in the required sections.`;
+        break;
+        
+      case 'bill-of-entry':
+        instruction = `Please analyze these bills of entry and provide a detailed comparison. 
+        
+Extract key information such as:
+- Entry numbers and dates
+- Importer and exporter information
+- Customs broker details
+- Port of loading and discharge
+- Country of origin
+- HS codes and product descriptions
+- Duty and tax assessments
+- Total declared value
 
-CRITICAL: For EACH section, you MUST follow this EXACT structure to ensure proper parsing:
-<section_name>Verification</section_name>
-<quotes>
-- Quote 1 from document
-- Quote 2 from document
-</quotes>
-<analysis>
-Your analysis based strictly on the quotes
-</analysis>
-
-Repeat this structure for EVERY section (Validation, Review, etc.). This format is required for the application to properly parse your response.
-`;
-
-  // Specific details for the key logistics activities
-  const specific: Record<string, string> = {
-    'packing-list':
-      "Focus on items, quantities, weight, packaging type, consignee/consignor, shipment IDs, and dates. Compare item counts and weights between documents. Highlight any discrepancies in quantities or descriptions.",
-    'invoice':
-      "Focus on invoice numbers, shipment details, item prices, taxes, totals, and currency. Compare financial values and ensure calculations are correct. Check for price discrepancies between documents.",
-    'bill-of-entry':
-      "Focus on customs details, HS codes, duties, declared goods, shipper/receiver, and regulatory fields. Verify that customs information is consistent across documents. Check for compliance with import/export regulations.",
-    // General document types
-    'general': "Compare all key information between documents. Identify any inconsistencies or missing information.",
-    'contracts': "Focus on parties, terms, financials, and validity dates. Compare contract clauses and identify any differences in terms or conditions. Check for legal compliance and potential risks.",
-    'invoices': "Extract invoice numbers, dates, items, quantity, price, taxes, total. Verify calculations and check for pricing discrepancies. Ensure tax calculations are correct.",
-    'resumes': "Compare skills, roles, education, relevant dates. Identify key qualifications and experience. Highlight strengths and potential areas for development.",
-    'reports': "Compare key findings, sections, metrics. Identify trends and patterns across reports. Highlight significant changes or developments over time."
-  };
-
-  // Normalize input for matching
-  const logiKey = comparisonType.toLowerCase().replace(/\s+/g, '-');
-  return baseInstruction + (specific[logiKey] || '');
+Organize this information into a comparison table, then provide analysis in the required sections.`;
+        break;
+    }
+    
+    return instruction;
+  }
 }

@@ -2,10 +2,13 @@ import { useState, useEffect } from 'react';
 import { DocumentFile, ComparisonResult, ParsedDocument } from '../lib/types';
 import { FileUpload } from './FileUpload';
 import { parseDocument } from '../lib/parsers';
-import { analyzeDocuments } from '../services/claude-service';
+import ClaudeService from '../services/claude-service';
 import { Button } from '../components/ui/custom-button';
 import { ComparisonView } from './ComparisonView';
 import { LoadingIndicator, LoadingOverlay } from './ui/loading-indicator';
+
+// Initialize the Claude service
+const claudeService = new ClaudeService();
 
 export function DocumentProcessor() {
   const [files, setFiles] = useState<DocumentFile[]>([]);
@@ -103,7 +106,7 @@ export function DocumentProcessor() {
       setProcessingProgress(50); // Parsing complete, now analyzing
       
       // Get the comparison type instruction
-      const response = await analyzeDocuments(parsed, getComparisonInstruction());
+      const response = await claudeService.analyzeDocuments(parsed, getComparisonInstruction());
       
       // Extract the result and token usage
       const { result, tokenUsage } = response;
@@ -175,7 +178,7 @@ export function DocumentProcessor() {
       const instruction = `Based on the previous comparison of documents, please answer this follow-up question: ${followUpQuestion}`;
       
       // Use the same documents but with the new instruction
-      const response = await analyzeDocuments(parsedDocuments, instruction);
+      const response = await claudeService.analyzeDocuments(parsedDocuments, instruction);
       
       // Extract the result and token usage
       const { result, tokenUsage } = response;
