@@ -1,5 +1,5 @@
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { DocumentFile, DocumentType } from '@/lib/types';
 import { getDocumentType } from '@/lib/parsers';
@@ -42,6 +42,8 @@ export function FileUpload({
   const [files, setFiles] = useState<DocumentFile[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Create a ref to access the file input element directly
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Reset error when disabled state changes
   useEffect(() => {
@@ -119,7 +121,7 @@ export function FileUpload({
           disabled && "opacity-50 cursor-not-allowed bg-muted"
         )}
       >
-        <input {...getInputProps()} />
+        <input {...getInputProps()} ref={fileInputRef} />
         <div className="flex flex-col items-center justify-center space-y-3">
           {isDragReject ? (
             <AlertCircle className="h-10 w-10 text-destructive animate-pulse" />
@@ -157,7 +159,13 @@ export function FileUpload({
               type="button"
               variant="outline"
               disabled={disabled}
-              onClick={e => e.stopPropagation()}
+              onClick={e => {
+                e.stopPropagation();
+                // Trigger the file input click event
+                if (fileInputRef.current) {
+                  fileInputRef.current.click();
+                }
+              }}
               className="relative overflow-hidden group"
             >
               <span className="relative z-10">Browse files</span>

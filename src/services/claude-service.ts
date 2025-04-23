@@ -28,7 +28,10 @@ export async function analyzeDocuments(
   const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY || '';
   if (!apiKey) throw new Error('Anthropic API key is missing.');
 
-  const anthropic = new Anthropic({ apiKey });
+  const anthropic = new Anthropic({ 
+    apiKey,
+    dangerouslyAllowBrowser: true
+  });
 
   // Compose multi-modal content for Claude (for text + image docs)
   let hasImage = documents.some(doc => typeof doc === 'object');
@@ -312,4 +315,5 @@ This structure must be followed for each section to ensure proper parsing of you
   const logiKey = comparisonType.toLowerCase().replace(/\s+/g, '-');
   return baseInstruction + (specific[logiKey] || '');
 }
+
 

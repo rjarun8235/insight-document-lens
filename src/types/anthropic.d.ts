@@ -1,7 +1,7 @@
 declare module '@anthropic-ai/sdk' {
   export default class Anthropic {
-    constructor(options: { apiKey: string });
-    
+    constructor(options: { apiKey: string; dangerouslyAllowBrowser?: boolean });
+
     messages: {
       create(params: {
         model: string;
