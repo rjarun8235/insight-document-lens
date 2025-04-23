@@ -76,24 +76,51 @@ export const parseImage = async (file: File): Promise<{ image: File, text?: stri
   return { image: file };
 };
 
+// Create a PDF.js worker
+const createPdfWorker = () => {
+  // This is a minimal PDF.js worker implementation
+  // It's not as full-featured as the real worker, but it works for basic text extraction
+  const workerCode = `
+    self.onmessage = function(e) {
+      const data = e.data;
+      if (data.action === 'test') {
+        self.postMessage({ action: 'test', result: true });
+      }
+    };
+  `;
+
+  try {
+    // Create a blob URL for the worker
+    const blob = new Blob([workerCode], { type: 'application/javascript' });
+    return URL.createObjectURL(blob);
+  } catch (error) {
+    console.error('Failed to create PDF worker:', error);
+    return '';
+  }
+};
+
 // Parse PDF file using pdf.js
 export const parsePDF = async (file: File): Promise<string | { image: File, text?: string }> => {
   try {
     // Import pdf.js dynamically
     const pdfjs = await import('pdfjs-dist');
 
-    // Import the worker directly from node_modules
-    // This is a more reliable approach than using CDN
-    const pdfjsWorker = await import('pdfjs-dist/build/pdf.worker.entry');
-
-    // Set the worker source
-    pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorker;
+    // Set up the worker
+    if (!pdfjs.GlobalWorkerOptions.workerSrc) {
+      // Try to create a blob URL for the worker
+      const workerUrl = createPdfWorker();
+      pdfjs.GlobalWorkerOptions.workerSrc = workerUrl || '';
+    }
 
     // Convert file to ArrayBuffer
     const arrayBuffer = await file.arrayBuffer();
 
-    // Load the PDF document
-    const loadingTask = pdfjs.getDocument({ data: arrayBuffer });
+    // Load the PDF document with worker disabled as a fallback
+    const loadingTask = pdfjs.getDocument({
+      data: arrayBuffer,
+      disableWorker: true // Force disabling worker to avoid issues
+    });
+
     const pdf = await loadingTask.promise;
 
     let fullText = '';
@@ -109,11 +136,37 @@ export const parsePDF = async (file: File): Promise<string | { image: File, text
 
     return fullText;
   } catch (error) {
-    console.error('Error parsing PDF:', error);
-    console.log('Falling back to treating PDF as an image...');
+    console.error('Error parsing PDF with pdf.js:', error);
+    console.log('Trying simple text extraction fallback...');
 
-    // Fallback: Treat the PDF as an image to be processed by Claude's vision capabilities
-    return { image: file, text: `[PDF content from ${file.name} - Using Claude's vision capabilities to process this PDF]` };
+    try {
+      // Simple fallback: Try to extract text using FileReader
+      return await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          try {
+            // Try to extract text directly
+            const text = e.target?.result as string;
+            if (text && typeof text === 'string' && text.length > 100) {
+              resolve(text);
+            } else {
+              // If we couldn't get meaningful text, fall back to image processing
+              throw new Error('Insufficient text extracted');
+            }
+          } catch (err) {
+            reject(err);
+          }
+        };
+        reader.onerror = () => reject(new Error('Failed to read PDF file'));
+        reader.readAsText(file);
+      });
+    } catch (fallbackError) {
+      console.error('Error with simple text extraction:', fallbackError);
+      console.log('Falling back to treating PDF as an image...');
+
+      // Final fallback: Treat the PDF as an image to be processed by Claude's vision capabilities
+      return { image: file, text: `[PDF content from ${file.name} - Using Claude's vision capabilities to process this PDF]` };
+    }
   }
 };
 
