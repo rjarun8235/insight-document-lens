@@ -38,6 +38,10 @@ export interface ComparisonTable {
   title: string;
   headers: string[];
   rows: string[][];
+  // Flag to indicate if this table is a multi-document comparison table
+  isMultiDocument?: boolean;
+  // Document names for multi-document tables
+  documentNames?: string[];
 }
 
 export interface AnalysisSection {

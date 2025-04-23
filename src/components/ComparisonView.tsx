@@ -140,6 +140,15 @@ export const ComparisonView = ({ result, documentNames }: ComparisonViewProps) =
   
   // Extract document values from a table row
   const getDocumentValues = (row: string[]) => {
+    // Handle multi-document tables (more than 2 documents)
+    if (row.length > 3) {
+      return {
+        field: row[0] || '',
+        values: row.slice(1) // Get all document values
+      };
+    }
+    
+    // Handle traditional 2-document comparison
     if (row.length < 3) return { field: row[0] || '', doc1: '', doc2: '' };
     return {
       field: row[0] || '',
@@ -194,11 +203,24 @@ export const ComparisonView = ({ result, documentNames }: ComparisonViewProps) =
                     <tbody>
                       {table.rows.map((row, rowIndex) => (
                         <tr key={rowIndex} className={rowIndex % 2 === 0 ? 'bg-background' : 'bg-muted/20'}>
-                          {row.map((cell, cellIndex) => (
-                            <td key={cellIndex} className="p-2 text-sm border-t">
-                              {cell}
-                            </td>
-                          ))}
+                          {row.map((cell, cellIndex) => {
+                            // Highlight cells with differences for better visualization
+                            // First column is always the field name, so skip it
+                            const isFirstColumn = cellIndex === 0;
+                            const hasDifferences = !isFirstColumn && 
+                              row.slice(1).some(otherCell => 
+                                otherCell !== cell && cellIndex > 0
+                              );
+                            
+                            return (
+                              <td 
+                                key={cellIndex} 
+                                className={`p-2 text-sm border-t ${hasDifferences ? 'bg-yellow-50' : ''}`}
+                              >
+                                {cell}
+                              </td>
+                            );
+                          })}
                         </tr>
                       ))}
                     </tbody>
@@ -211,89 +233,66 @@ export const ComparisonView = ({ result, documentNames }: ComparisonViewProps) =
         
         {/* Side by Side View */}
         {activeTab === 'sideBySide' && (
-          <div className="space-y-4 mt-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Document 1 */}
-              <div className="border rounded-lg overflow-hidden">
-                <div className="bg-muted p-3 font-medium border-b">
-                  {documentNames[0] || 'Document 1'}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+            {documentNames.length > 0 && result.tables.length > 0 && (
+              <>
+                {/* First document column */}
+                <div className="border rounded-lg overflow-hidden">
+                  <div className="bg-muted p-3 font-medium border-b">
+                    {documentNames[0] || 'Document 1'}
+                  </div>
+                  <div className="p-4 space-y-2">
+                    {result.tables[0].rows.map((row, i) => {
+                      const { field, doc1 } = getDocumentValues(row);
+                      return (
+                        <div key={i} className="py-1">
+                          <div className="font-medium text-sm">{field}</div>
+                          <div className="text-sm">{doc1}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-                <div className="p-4 space-y-3">
-                  {result.tables.map((table, tableIndex) => (
-                    <div key={tableIndex} className="space-y-2">
-                      <h3 className="font-medium text-sm">{table.title || `Table ${tableIndex + 1}`}</h3>
-                      <div className="space-y-1">
-                        {table.rows.map((row, rowIndex) => {
-                          const { field, doc1 } = getDocumentValues(row);
-                          return (
-                            <div key={rowIndex} className="text-sm">
-                              <span className="font-medium">{field}:</span> {doc1}
-                            </div>
-                          );
-                        })}
-                      </div>
+                
+                {/* Second document column */}
+                <div className="border rounded-lg overflow-hidden">
+                  <div className="bg-muted p-3 font-medium border-b">
+                    {documentNames[1] || 'Document 2'}
+                  </div>
+                  <div className="p-4 space-y-2">
+                    {result.tables[0].rows.map((row, i) => {
+                      const { field, doc1, doc2, values } = getDocumentValues(row) as any;
+                      return (
+                        <div key={i} className="py-1">
+                          <div className="font-medium text-sm">{field}</div>
+                          <div className="text-sm">{doc2 || (values && values[1]) || ''}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+                
+                {/* Additional document columns for multi-document comparison */}
+                {documentNames.length > 2 && documentNames.slice(2).map((docName, docIndex) => (
+                  <div key={docIndex} className="border rounded-lg overflow-hidden">
+                    <div className="bg-muted p-3 font-medium border-b">
+                      {docName || `Document ${docIndex + 3}`}
                     </div>
-                  ))}
-                </div>
-              </div>
-              
-              {/* Document 2 */}
-              <div className="border rounded-lg overflow-hidden">
-                <div className="bg-muted p-3 font-medium border-b">
-                  {documentNames[1] || 'Document 2'}
-                </div>
-                <div className="p-4 space-y-3">
-                  {result.tables.map((table, tableIndex) => (
-                    <div key={tableIndex} className="space-y-2">
-                      <h3 className="font-medium text-sm">{table.title || `Table ${tableIndex + 1}`}</h3>
-                      <div className="space-y-1">
-                        {table.rows.map((row, rowIndex) => {
-                          const { field, doc2 } = getDocumentValues(row);
-                          return (
-                            <div key={rowIndex} className="text-sm">
-                              <span className="font-medium">{field}:</span> {doc2}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-            
-            {/* Differences Highlighted */}
-            <div className="border rounded-lg overflow-hidden mt-6">
-              <div className="bg-muted p-3 font-medium border-b">
-                Differences Highlighted
-              </div>
-              <div className="p-4 space-y-3">
-                {result.tables.map((table, tableIndex) => (
-                  <div key={tableIndex} className="space-y-2">
-                    <h3 className="font-medium">{table.title || `Table ${tableIndex + 1}`}</h3>
-                    <div className="space-y-2">
-                      {table.rows.map((row, rowIndex) => {
-                        const { field, doc1, doc2 } = getDocumentValues(row);
-                        const isDifferent = doc1 !== doc2;
-                        
+                    <div className="p-4 space-y-2">
+                      {result.tables[0].rows.map((row, i) => {
+                        const { field, values } = getDocumentValues(row) as any;
                         return (
-                          <div key={rowIndex} className={`p-2 rounded text-sm ${isDifferent ? 'bg-amber-50' : ''}`}>
-                            <div className="font-medium">{field}</div>
-                            {isDifferent ? (
-                              <div>
-                                <TextDiff original={doc1} modified={doc2} />
-                              </div>
-                            ) : (
-                              <div className="text-gray-500">No differences</div>
-                            )}
+                          <div key={i} className="py-1">
+                            <div className="font-medium text-sm">{field}</div>
+                            <div className="text-sm">{values && values[docIndex + 2] || ''}</div>
                           </div>
                         );
                       })}
                     </div>
                   </div>
                 ))}
-              </div>
-            </div>
+              </>
+            )}
           </div>
         )}
         

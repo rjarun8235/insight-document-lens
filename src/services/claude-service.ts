@@ -228,12 +228,13 @@ IMPORTANT GUIDELINES:
 - When comparing documents, highlight specific differences with direct citations from the documents.
 - If the documents are unclear or ambiguous, acknowledge this uncertainty rather than guessing.
 - Format your response consistently using the structure below.
+- IMPORTANT: You must handle ANY NUMBER of documents, not just two. If more than two documents are provided, create comparison tables that include ALL documents.
 
-REQUIRED OUTPUT FORMAT:
+REQUIRED OUTPUT FORMAT FOR MULTIPLE DOCUMENTS:
 <comparison_tables>
-| Field | Document 1 | Document 2 |
-| ----- | ---------- | ---------- |
-| Field Name | Value from Doc 1 | Value from Doc 2 |
+| Field | Document 1 | Document 2 | Document 3 | ... | Document N |
+| ----- | ---------- | ---------- | ---------- | --- | ---------- |
+| Field Name | Value from Doc 1 | Value from Doc 2 | Value from Doc 3 | ... | Value from Doc N |
 ...additional rows as needed
 </comparison_tables>
 
@@ -388,9 +389,9 @@ Your analysis of issues based only on the quotes above.
           };
 
           // Extract tables from markdown
-          const tableRegex = /\|([^\|]*)\|([^\|]*)\|([^\|]*)\|/g;
-          const tableHeaderRegex = /\|\s*([^\|]*)\s*\|\s*([^\|]*)\s*\|\s*([^\|]*)\s*\|/;
-          const tableSeparatorRegex = /\|\s*[-:\s]+\s*\|\s*[-:\s]+\s*\|\s*[-:\s]+\s*\|/;
+          const tableRegex = /\|([^\|]*)\|([^\|]*)\|/g;
+          const tableHeaderRegex = /\|\s*([^\|]*)\s*\|\s*([^\|]*)\s*\|/;
+          const tableSeparatorRegex = /\|\s*[-:\s]+\s*\|\s*[-:\s]+\s*\|/;
 
           // Find all tables in the response
           const tables: ComparisonTable[] = [];
@@ -403,22 +404,34 @@ Your analysis of issues based only on the quotes above.
             const line = lines[i].trim();
 
             // Check if this is a table header
-            if (tableHeaderRegex.test(line) && i + 1 < lines.length && tableSeparatorRegex.test(lines[i + 1])) {
-              // Extract headers
-              const headerMatch = line.match(tableHeaderRegex);
-              if (headerMatch) {
+            if (line.startsWith('|') && line.endsWith('|')) {
+              const cells = line.split('|').filter(cell => cell.trim() !== '');
+              
+              // If this is the first row and the next line has separator characters, it's a header
+              if (!currentTable && i + 1 < lines.length && lines[i + 1].includes('-')) {
+                // Extract headers
                 currentTable = {
                   title: 'Document Comparison',
-                  headers: headerMatch.slice(1).map((h: string) => h.trim()),
-                  rows: []
+                  headers: cells.map(h => h.trim()),
+                  rows: [],
+                  isMultiDocument: cells.length > 3 // If more than 3 columns (Field, Doc1, Doc2), it's multi-document
                 };
+                
+                // If it's a multi-document table, set document names
+                if (currentTable.isMultiDocument) {
+                  // Use the document names passed from the DocumentProcessor component
+                  // or generate default names based on the number of documents
+                  currentTable.documentNames = documents.map((doc, index) => 
+                    doc.image ? doc.image.name : `Document ${index + 1}`
+                  );
+                }
+                
                 i++; // Skip the separator line
               }
-            }
-            // Check if this is a table row
-            else if (currentTable && tableRegex.test(line)) {
-              const cells = line.split('|').slice(1, -1).map((cell: string) => cell.trim());
-              currentTable.rows.push(cells);
+              // Check if this is a table row
+              else if (currentTable) {
+                currentTable.rows.push(cells.map(cell => cell.trim()));
+              }
             }
             // Check if we've reached the end of a table
             else if (currentTable && line === '') {
@@ -432,11 +445,26 @@ Your analysis of issues based only on the quotes above.
             tables.push(currentTable);
           }
 
-          result.tables = tables.length > 0 ? tables : [{
-            title: 'Document Comparison',
-            headers: ['Field', 'Document 1', 'Document 2'],
-            rows: [['No data extracted', '', '']]
-          }];
+          // If no tables were found, create a default one
+          if (tables.length === 0) {
+            // Create appropriate headers based on number of documents
+            const headers = ['Field'];
+            for (let i = 0; i < documents.length; i++) {
+              headers.push(`Document ${i + 1}`);
+            }
+            
+            tables.push({
+              title: 'Document Comparison',
+              headers: headers,
+              rows: [['No data extracted', ...Array(documents.length).fill('')]],
+              isMultiDocument: documents.length > 2,
+              documentNames: documents.map((doc, index) => 
+                doc.image ? doc.image.name : `Document ${index + 1}`
+              )
+            });
+          }
+
+          result.tables = tables;
 
           // Extract sections using multiple pattern matching approaches
           const sectionKeys = [
@@ -515,6 +543,7 @@ Your analysis of issues based only on the quotes above.
     // Customize instructions based on document type
     switch (comparisonType.toLowerCase()) {
       case 'invoice':
+      case 'invoices':
         instruction = `Please analyze these invoices and provide a detailed comparison. 
         
 Extract key information such as:
@@ -524,11 +553,22 @@ Extract key information such as:
 - Total amounts and payment terms
 - Tax information
 - Shipping details
+- Currency and exchange rates
+- Payment terms and due dates
+- Discount information
+- Special notes or terms
 
-Organize this information into a comparison table, then provide analysis in the required sections.`;
+Organize this information into a comparison table, then provide analysis in the required sections. Pay special attention to:
+- Price discrepancies between documents
+- Quantity discrepancies between documents
+- Date inconsistencies
+- Missing or additional items
+- Tax calculation errors
+- Total amount calculation errors`;
         break;
         
       case 'packing-list':
+      case 'packing-lists':
         instruction = `Please analyze these packing lists and provide a detailed comparison. 
         
 Extract key information such as:
@@ -538,11 +578,53 @@ Extract key information such as:
 - Package counts and types
 - Special handling instructions
 - Total gross and net weights
+- Container numbers and seals
+- Marks and numbers
+- Country of origin
+- Shipping marks
+- Dimensions and volume calculations
 
-Organize this information into a comparison table, then provide analysis in the required sections.`;
+Organize this information into a comparison table, then provide analysis in the required sections. Pay special attention to:
+- Quantity discrepancies between documents
+- Weight discrepancies between documents
+- Missing or additional items
+- Packaging type inconsistencies
+- Dimension or volume calculation errors
+- Shipping mark inconsistencies`;
+        break;
+        
+      case 'bill-of-lading':
+      case 'bl':
+      case 'bills-of-lading':
+        instruction = `Please analyze these Bills of Lading (BL) and provide a detailed comparison. 
+        
+Extract key information such as:
+- BL numbers and dates
+- Shipper/exporter information
+- Consignee information
+- Notify party details
+- Vessel name and voyage number
+- Port of loading and discharge
+- Place of receipt and delivery
+- Container numbers and seal numbers
+- Marks and numbers
+- Description of goods and packages
+- Gross weight and measurement
+- Freight terms (prepaid or collect)
+- Special instructions or clauses
+
+Organize this information into a comparison table, then provide analysis in the required sections. Pay special attention to:
+- Discrepancies in consignee or shipper details
+- Vessel or voyage inconsistencies
+- Port information discrepancies
+- Container or seal number mismatches
+- Description of goods inconsistencies
+- Weight or measurement discrepancies
+- Missing or additional clauses`;
         break;
         
       case 'bill-of-entry':
+      case 'bills-of-entry':
         instruction = `Please analyze these bills of entry and provide a detailed comparison. 
         
 Extract key information such as:
@@ -554,8 +636,39 @@ Extract key information such as:
 - HS codes and product descriptions
 - Duty and tax assessments
 - Total declared value
+- Exchange rates
+- Import license details
+- Customs station
 
-Organize this information into a comparison table, then provide analysis in the required sections.`;
+Organize this information into a comparison table, then provide analysis in the required sections. Pay special attention to:
+- HS code discrepancies
+- Duty calculation errors
+- Value declaration inconsistencies
+- Country of origin mismatches
+- Missing or additional items`;
+        break;
+
+      case 'logistics':
+        instruction = `Please analyze these logistics documents and provide a detailed comparison. These may include Bills of Lading, Invoices, Packing Lists, or other shipping documents.
+        
+Extract key information such as:
+- Document numbers and dates
+- Shipper/exporter and consignee information
+- Vessel/voyage details if present
+- Item descriptions, quantities, weights, and dimensions
+- Package counts and types
+- Container and seal numbers if present
+- Ports of loading and discharge if present
+- Special handling instructions
+- Values and payment terms if present
+
+Organize this information into a comparison table, then provide analysis in the required sections. Pay special attention to:
+- Cross-document consistency for the same shipment
+- Quantity discrepancies between documents
+- Weight or measurement discrepancies
+- Description inconsistencies
+- Date mismatches
+- Missing information in one document that appears in others`;
         break;
     }
     
