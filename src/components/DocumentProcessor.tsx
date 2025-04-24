@@ -181,8 +181,8 @@ export function DocumentProcessor() {
   };
 
   const handleCompare = async () => {
-    if (files.length < 1) {
-      setError('Please upload at least one document to analyze.');
+    if (files.length < 2) {
+      setError('Please upload at least two documents for comparison.');
       return;
     }
     
@@ -193,13 +193,34 @@ export function DocumentProcessor() {
       // First parse the files
       const parsed = await parseFiles();
       
-      if (parsed.length > 0) {
-        // Then analyze them
-        await processDocuments();
+      // Check if we have enough parsed documents
+      if (parsed.length < 2) {
+        setError('Please upload at least two valid documents for comparison.');
+        setIsProcessing(false);
+        return;
       }
+      
+      // Set document names for better display in the comparison
+      const docNames = files.map(file => file.name);
+      setDocumentNames(docNames);
+      
+      // Update progress
+      setProcessingProgress(50); // Parsing complete, now analyzing
+      
+      // Get the comparison type instruction
+      const response = await claudeService.analyzeDocuments(parsed, getComparisonInstruction());
+      
+      // Extract the result and token usage
+      const { result, tokenUsage } = response;
+      
+      // Update state with the comparison result
+      setComparisonResult(result);
+      setTokenUsage(tokenUsage);
+      setProcessingProgress(100); // Processing complete
     } catch (err) {
       console.error('Comparison process failed:', err);
-      setError(`Comparison process failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      setError(`Comparison failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      setProcessingProgress(0);
     } finally {
       setIsProcessing(false);
     }

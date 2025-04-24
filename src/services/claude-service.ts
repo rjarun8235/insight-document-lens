@@ -80,6 +80,211 @@ export default class ClaudeService {
     });
   }
   
+  async callClaudeApi(payload: any): Promise<any> {
+    let responseData;
+    const maxRetries = 3;
+    let retryCount = 0;
+    
+    while (retryCount < maxRetries) {
+      try {
+        console.log('Calling Claude API...');
+        
+        // Direct API call using the Anthropic SDK
+        const response = await this.anthropic.messages.create(payload);
+        responseData = response;
+        console.log('Successfully called Claude API');
+        break;
+      } catch (error) {
+        retryCount++;
+        console.warn(`API call failed (attempt ${retryCount}/${maxRetries}):`, error);
+        
+        // In development, fall back to mock data
+        if (import.meta.env.DEV || import.meta.env.VITE_USE_MOCK_API === 'true') {
+          console.warn('Using mock data as fallback in development');
+          return { result: getMockResponse(), tokenUsage: { input: 0, output: 0, cost: 0 } };
+        }
+        
+        // If we've reached max retries, throw the error
+        if (retryCount >= maxRetries) {
+          console.error('Max retries reached. Unable to connect to Claude API:', error);
+          throw new Error('Unable to connect to Claude API after multiple attempts. Please check your network connection and API key.');
+        }
+        
+        // Wait before retrying (exponential backoff)
+        const delay = Math.min(1000 * Math.pow(2, retryCount), 10000);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+    
+    // Log token usage to see cache effectiveness
+    const inputTokens = responseData.usage?.input_tokens || 0;
+    const outputTokens = responseData.usage?.output_tokens || 0;
+    
+    // Calculate approximate cost (based on Claude 3 Sonnet pricing)
+    // $15 per million input tokens, $75 per million output tokens
+    const inputCost = (inputTokens / 1000000) * 15;
+    const outputCost = (outputTokens / 1000000) * 75;
+    const totalCost = inputCost + outputCost;
+    
+    console.log(`Token usage - Input: ${inputTokens}, Output: ${outputTokens}, Estimated cost: $${totalCost.toFixed(4)}`);
+    
+    return {
+      result: this.processResponse(responseData),
+      tokenUsage: {
+        input: inputTokens,
+        output: outputTokens,
+        cost: totalCost
+      }
+    };
+  }
+  
+  processResponse(responseData: any): ComparisonResult {
+    // Get the response text
+    const responseText = responseData.content[0].text;
+
+    // Check if we got a valid response
+    if (!responseText || responseText.trim().length < 100) {
+      console.error('Claude returned an empty or very short response');
+      throw new Error('Claude returned an incomplete analysis. Please try again.');
+    }
+
+    // Parse the response to extract tables and sections
+    const result: ComparisonResult = {
+      tables: [],
+      verification: "",
+      validation: "",
+      review: "",
+      analysis: "",
+      summary: "",
+      insights: "",
+      recommendations: "",
+      risks: "",
+      issues: ""
+    };
+
+    // Extract tables from markdown
+    const tableRegex = /\|([^\|]*)\|([^\|]*)\|/g;
+    const tableHeaderRegex = /\|\s*([^\|]*)\s*\|\s*([^\|]*)\s*\|/;
+    const tableSeparatorRegex = /\|\s*[-:\s]+\s*\|\s*[-:\s]+\s*\|/;
+
+    // Find all tables in the response
+    const tables: ComparisonTable[] = [];
+    let currentTable: ComparisonTable | null = null;
+
+    // Split the response by lines
+    const lines = responseText.split('\n');
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+
+      // Check if this is a table header
+      if (line.startsWith('|') && line.endsWith('|')) {
+        const cells = line.split('|').filter(cell => cell.trim() !== '');
+        
+        // If this is the first row and the next line has separator characters, it's a header
+        if (!currentTable && i + 1 < lines.length && lines[i + 1].includes('-')) {
+          // Extract headers
+          currentTable = {
+            title: 'Document Comparison',
+            headers: cells.map(h => h.trim()),
+            rows: [],
+            isMultiDocument: cells.length > 3 // If more than 3 columns (Field, Doc1, Doc2), it's multi-document
+          };
+          
+          // If it's a multi-document table, set document names
+          if (currentTable.isMultiDocument) {
+            // Use the document names passed from the DocumentProcessor component
+            // or generate default names based on the number of documents
+            currentTable.documentNames = [];
+          }
+          
+          i++; // Skip the separator line
+        }
+        // Check if this is a table row
+        else if (currentTable) {
+          currentTable.rows.push(cells.map(cell => cell.trim()));
+        }
+      }
+      // Check if we've reached the end of a table
+      else if (currentTable && line === '') {
+        tables.push(currentTable);
+        currentTable = null;
+      }
+    }
+
+    // Add the last table if it exists
+    if (currentTable) {
+      tables.push(currentTable);
+    }
+
+    // If no tables were found, create a default one
+    if (tables.length === 0) {
+      // Create appropriate headers based on number of documents
+      const headers = ['Field'];
+      
+      tables.push({
+        title: 'Document Comparison',
+        headers: headers,
+        rows: [['No data extracted', ...Array().fill('')]],
+        isMultiDocument: false,
+        documentNames: []
+      });
+    }
+
+    result.tables = tables;
+
+    // Extract sections using multiple pattern matching approaches
+    const sectionKeys = [
+      'verification', 'validation', 'review', 'analysis',
+      'summary', 'insights', 'recommendations', 'risks', 'issues'
+    ];
+
+    // Try multiple patterns to extract sections
+    sectionKeys.forEach(key => {
+      // Try the structured format first (most precise)
+      const structuredRegex = new RegExp(
+        `<section_name>${key.charAt(0).toUpperCase() + key.slice(1)}<\\/section_name>[\\s\\S]*?<quotes>([\\s\\S]*?)<\\/quotes>[\\s\\S]*?<analysis>([\\s\\S]*?)<\\/analysis>`,
+        'i'
+      );
+
+      const match = responseText.match(structuredRegex);
+
+      if (match && match[1] && match[2]) {
+        // Include both quotes and analysis in the result
+        result[key] = `Quotes:\n${match[1].trim()}\n\nAnalysis:\n${match[2].trim()}`;
+        return; // Section found, move to next
+      }
+
+      // Try markdown heading format (## Verification)
+      const markdownHeadingRegex = new RegExp(
+        `##\\s*${key.charAt(0).toUpperCase() + key.slice(1)}\\s*\\n([\\s\\S]*?)(?=\\n##|$)`,
+        'i'
+      );
+
+      const markdownMatch = responseText.match(markdownHeadingRegex);
+
+      if (markdownMatch && markdownMatch[1]) {
+        result[key] = markdownMatch[1].trim();
+        return; // Section found, move to next
+      }
+
+      // Try simple label format (Verification:)
+      const labelRegex = new RegExp(
+        `${key.charAt(0).toUpperCase() + key.slice(1)}:\\s*([\\s\\S]*?)(?=\\n[A-Z][a-z]+:|$)`,
+        'i'
+      );
+
+      const labelMatch = responseText.match(labelRegex);
+
+      if (labelMatch && labelMatch[1]) {
+        result[key] = labelMatch[1].trim();
+        return; // Section found, move to next
+      }
+    });
+
+    return result;
+  }
+
   // Main Claude analysis, for both images & text files, tailored for logistics docs and standard use
   async analyzeDocuments(
     documents: ParsedDocument[],
@@ -321,225 +526,20 @@ IMPORTANT ADDITIONAL INSTRUCTIONS:
 
     // Use the retry mechanism for the API call
     try {
-      return await callWithRetry(async () => {
-        try {
-          // Check if we're in development mode and should use mock data
-          if (import.meta.env.DEV && import.meta.env.VITE_USE_MOCK_API === 'true') {
-            return { result: getMockResponse(), tokenUsage: { input: 0, output: 0, cost: 0 } };
+      return await this.callClaudeApi({
+        model: claudeModel,
+        max_tokens: 4000,
+        system: enhancedSystemMessage,
+        messages: [
+          {
+            role: "user",
+            content: userContent
           }
-
-          // Create the request payload
-          const payload = {
-            model: claudeModel,
-            max_tokens: 4000,
-            system: enhancedSystemMessage,
-            messages: [
-              {
-                role: "user",
-                content: userContent
-              }
-            ]
-          };
-
-          let responseData;
-
-          // Check if we're in a browser environment
-          const isBrowser = typeof window !== 'undefined';
-          
-          // Try to use the SDK directly first
-          try {
-            // Use the SDK directly (will work in environments where CORS is handled)
-            const response = await this.anthropic.messages.create(payload);
-            responseData = response;
-            console.log('Successfully used SDK directly for Claude API call');
-          } catch (error) {
-            // If direct SDK call fails due to CORS or other issues
-            console.warn('API call failed:', error);
-            
-            // In development, fall back to mock data
-            if (import.meta.env.DEV || import.meta.env.VITE_USE_MOCK_API === 'true') {
-              console.warn('Using mock data as fallback in development');
-              return { result: getMockResponse(), tokenUsage: { input: 0, output: 0, cost: 0 } };
-            } else {
-              // In production, show a clear error
-              console.error('Unable to connect to Claude API:', error);
-              throw new Error('Unable to connect to Claude API. Please check your network connection and API key.');
-            }
-          }
-          
-          // Log token usage to see cache effectiveness
-          console.log('Token usage:', responseData.usage);
-          
-          // Log the first 500 characters of the response for debugging
-          console.log('Response preview:', responseData.content[0].text.substring(0, 500) + '...');
-
-          // Get the response text
-          const responseText = responseData.content[0].text;
-
-          // Check if we got a valid response
-          if (!responseText || responseText.trim().length < 100) {
-            console.error('Claude returned an empty or very short response');
-            throw new Error('Claude returned an incomplete analysis. Please try again.');
-          }
-
-          // Parse the response to extract tables and sections
-          const result: ComparisonResult = {
-            tables: [],
-            verification: "",
-            validation: "",
-            review: "",
-            analysis: "",
-            summary: "",
-            insights: "",
-            recommendations: "",
-            risks: "",
-            issues: ""
-          };
-
-          // Extract tables from markdown
-          const tableRegex = /\|([^\|]*)\|([^\|]*)\|/g;
-          const tableHeaderRegex = /\|\s*([^\|]*)\s*\|\s*([^\|]*)\s*\|/;
-          const tableSeparatorRegex = /\|\s*[-:\s]+\s*\|\s*[-:\s]+\s*\|/;
-
-          // Find all tables in the response
-          const tables: ComparisonTable[] = [];
-          let currentTable: ComparisonTable | null = null;
-
-          // Split the response by lines
-          const lines = responseText.split('\n');
-
-          for (let i = 0; i < lines.length; i++) {
-            const line = lines[i].trim();
-
-            // Check if this is a table header
-            if (line.startsWith('|') && line.endsWith('|')) {
-              const cells = line.split('|').filter(cell => cell.trim() !== '');
-              
-              // If this is the first row and the next line has separator characters, it's a header
-              if (!currentTable && i + 1 < lines.length && lines[i + 1].includes('-')) {
-                // Extract headers
-                currentTable = {
-                  title: 'Document Comparison',
-                  headers: cells.map(h => h.trim()),
-                  rows: [],
-                  isMultiDocument: cells.length > 3 // If more than 3 columns (Field, Doc1, Doc2), it's multi-document
-                };
-                
-                // If it's a multi-document table, set document names
-                if (currentTable.isMultiDocument) {
-                  // Use the document names passed from the DocumentProcessor component
-                  // or generate default names based on the number of documents
-                  currentTable.documentNames = documents.map((doc, index) => 
-                    doc.image ? doc.image.name : `Document ${index + 1}`
-                  );
-                }
-                
-                i++; // Skip the separator line
-              }
-              // Check if this is a table row
-              else if (currentTable) {
-                currentTable.rows.push(cells.map(cell => cell.trim()));
-              }
-            }
-            // Check if we've reached the end of a table
-            else if (currentTable && line === '') {
-              tables.push(currentTable);
-              currentTable = null;
-            }
-          }
-
-          // Add the last table if it exists
-          if (currentTable) {
-            tables.push(currentTable);
-          }
-
-          // If no tables were found, create a default one
-          if (tables.length === 0) {
-            // Create appropriate headers based on number of documents
-            const headers = ['Field'];
-            for (let i = 0; i < documents.length; i++) {
-              headers.push(`Document ${i + 1}`);
-            }
-            
-            tables.push({
-              title: 'Document Comparison',
-              headers: headers,
-              rows: [['No data extracted', ...Array(documents.length).fill('')]],
-              isMultiDocument: documents.length > 2,
-              documentNames: documents.map((doc, index) => 
-                doc.image ? doc.image.name : `Document ${index + 1}`
-              )
-            });
-          }
-
-          result.tables = tables;
-
-          // Extract sections using multiple pattern matching approaches
-          const sectionKeys = [
-            'verification', 'validation', 'review', 'analysis',
-            'summary', 'insights', 'recommendations', 'risks', 'issues'
-          ];
-
-          // Try multiple patterns to extract sections
-          sectionKeys.forEach(key => {
-            // Try the structured format first (most precise)
-            const structuredRegex = new RegExp(
-              `<section_name>${key.charAt(0).toUpperCase() + key.slice(1)}<\\/section_name>[\\s\\S]*?<quotes>([\\s\\S]*?)<\\/quotes>[\\s\\S]*?<analysis>([\\s\\S]*?)<\\/analysis>`,
-              'i'
-            );
-
-            const match = responseText.match(structuredRegex);
-
-            if (match && match[1] && match[2]) {
-              // Include both quotes and analysis in the result
-              result[key] = `Quotes:\n${match[1].trim()}\n\nAnalysis:\n${match[2].trim()}`;
-              return; // Section found, move to next
-            }
-
-            // Try markdown heading format (## Verification)
-            const markdownHeadingRegex = new RegExp(
-              `##\\s*${key.charAt(0).toUpperCase() + key.slice(1)}\\s*\\n([\\s\\S]*?)(?=\\n##|$)`,
-              'i'
-            );
-
-            const markdownMatch = responseText.match(markdownHeadingRegex);
-
-            if (markdownMatch && markdownMatch[1]) {
-              result[key] = markdownMatch[1].trim();
-              return; // Section found, move to next
-            }
-
-            // Try simple label format (Verification:)
-            const labelRegex = new RegExp(
-              `${key.charAt(0).toUpperCase() + key.slice(1)}:\\s*([\\s\\S]*?)(?=\\n[A-Z][a-z]+:|$)`,
-              'i'
-            );
-
-            const labelMatch = responseText.match(labelRegex);
-
-            if (labelMatch && labelMatch[1]) {
-              result[key] = labelMatch[1].trim();
-              return; // Section found, move to next
-            }
-          });
-
-          // Return the result and token usage
-          return { 
-            result, 
-            tokenUsage: {
-              input: responseData.usage.input_tokens + estimatedImageTokens,
-              output: responseData.usage.output_tokens,
-              cost: ((responseData.usage.input_tokens + estimatedImageTokens) * 3 + responseData.usage.output_tokens * 15) / 1000000 // $3 per million input tokens, $15 per million output tokens
-            }
-          };
-        } catch (error) {
-          console.error('Error calling Claude API:', error);
-          throw new Error(formatErrorMessage(error));
-        }
-      }, 3); // Retry up to 3 times
+        ]
+      });
     } catch (error) {
-      console.error('Error preparing documents:', error);
-      throw new Error('Failed to prepare documents for analysis.');
+      console.error('Error calling Claude API:', error);
+      throw new Error(formatErrorMessage(error));
     }
   }
 
