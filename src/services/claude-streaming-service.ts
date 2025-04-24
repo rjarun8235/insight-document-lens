@@ -1,6 +1,7 @@
 // Import required dependencies
 import { ComparisonResult, ComparisonTable } from '@/lib/types';
 import { fetchApiKeyFromSupabase } from '@/lib/supabase';
+import { supabase } from "@/integrations/supabase/client";
 
 // Helper to convert a File object (image) to base64 and media type
 async function fileToBase64(file: File): Promise<{base64: string, mediaType: string}> {
@@ -153,30 +154,31 @@ export async function streamAnalyzeDocuments(
     // Signal that we're starting to stream
     if (callbacks.onProgress) callbacks.onProgress(5);
     
-    // Make direct API call with streaming
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    // Prepare the payload for Claude API
+    const payload = {
+      model: claudeModel,
+      system: systemMessage,
+      messages: [
+        {
+          role: "user",
+          content: [
+            ...userContent,
+            ...systemContent
+          ]
+        }
+      ],
+      max_tokens: 4000,
+      stream: true
+    };
+    
+    // Use Supabase Edge Function as a proxy to avoid CORS issues
+    const response = await fetch(`${supabase.functions.url}/claude-api-proxy`, {
       method: 'POST',
       headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-        'anthropic-dangerous-direct-browser-access': 'true',
+        'Content-Type': 'application/json',
+        // No auth token needed since we're using --no-verify-jwt
       },
-      body: JSON.stringify({
-        model: claudeModel,
-        system: systemMessage,
-        messages: [
-          {
-            role: "user",
-            content: [
-              ...userContent,
-              ...systemContent
-            ]
-          }
-        ],
-        max_tokens: 4000,
-        stream: true
-      })
+      body: JSON.stringify(payload)
     });
     
     if (!response.ok) {

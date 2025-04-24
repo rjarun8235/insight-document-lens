@@ -2,6 +2,7 @@ import axios from 'axios';
 import { ComparisonResult, ComparisonTable, ParsedDocument } from '../lib/types';
 import { callWithRetry, formatErrorMessage } from '@/utils/api-helpers';
 import { fetchApiKeyFromSupabase } from '@/lib/supabase';
+import { supabase } from "@/integrations/supabase/client";
 
 // Helper to convert a File object (image) to base64 and media type
 async function fileToBase64(file: File): Promise<{base64: string, mediaType: string}> {
@@ -242,23 +243,16 @@ export default class ClaudeService {
       try {
         console.log('Calling Claude API...');
         
-        // Direct API call with the CORS header
-        const response = await fetch("https://api.anthropic.com/v1/messages", {
-          method: "POST",
-          headers: {
-            "x-api-key": this.apiKey,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-            "anthropic-dangerous-direct-browser-access": "true",
-          },
-          body: JSON.stringify(payload)
+        // Use Supabase Edge Function as a proxy to avoid CORS issues
+        const { data, error } = await supabase.functions.invoke('claude-api-proxy', {
+          body: payload
         });
         
-        if (!response.ok) {
-          throw new Error(`Claude API returned error: ${response.status} ${response.statusText}`);
+        if (error) {
+          throw new Error(`Supabase Edge Function error: ${error.message}`);
         }
         
-        responseData = await response.json();
+        responseData = data;
         console.log('Successfully called Claude API');
         break;
       } catch (error) {
