@@ -1,6 +1,5 @@
 // Import required dependencies
 import { ComparisonResult, ComparisonTable } from '@/lib/types';
-import { supabase } from "@/integrations/supabase/client";
 
 // Helper to convert a File object (image) to base64 and media type
 async function fileToBase64(file: File): Promise<{base64: string, mediaType: string}> {
@@ -153,18 +152,18 @@ export async function streamAnalyzeDocuments(
       stream: true
     };
     
-    // Use Supabase Edge Function as a proxy to avoid CORS issues
-    const response = await fetch(`${supabase.functions.url}/claude-api-proxy`, {
+    // Use direct fetch to the Edge Function instead of Supabase client
+    // This avoids the x-client-info header that causes CORS issues
+    const response = await fetch('https://cbrgpzdxttzlvvryysaf.supabase.co/functions/v1/claude-api-proxy', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        // No auth token needed since we're using --no-verify-jwt
+        'Content-Type': 'application/json'
       },
       body: JSON.stringify(payload)
     });
     
     if (!response.ok) {
-      throw new Error(`Claude API returned error: ${response.status} ${response.statusText}`);
+      throw new Error(`Claude API proxy returned error: ${response.status} ${response.statusText}`);
     }
     
     const reader = response.body?.getReader();

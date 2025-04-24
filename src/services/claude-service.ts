@@ -1,7 +1,6 @@
 import axios from 'axios';
 import { ComparisonResult, ComparisonTable, ParsedDocument } from '../lib/types';
 import { callWithRetry, formatErrorMessage } from '@/utils/api-helpers';
-import { supabase } from "@/integrations/supabase/client";
 
 // Helper to convert a File object (image) to base64 and media type
 async function fileToBase64(file: File): Promise<{base64: string, mediaType: string}> {
@@ -220,16 +219,21 @@ export default class ClaudeService {
       try {
         console.log('Calling Claude API...');
         
-        // Use Supabase Edge Function as a proxy to avoid CORS issues
-        const { data, error } = await supabase.functions.invoke('claude-api-proxy', {
-          body: payload
+        // Use direct fetch to the Edge Function instead of Supabase client
+        // This avoids the x-client-info header that causes CORS issues
+        const response = await fetch('https://cbrgpzdxttzlvvryysaf.supabase.co/functions/v1/claude-api-proxy', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload)
         });
         
-        if (error) {
-          throw new Error(`Supabase Edge Function error: ${error.message}`);
+        if (!response.ok) {
+          throw new Error(`Claude API proxy returned error: ${response.status} ${response.statusText}`);
         }
         
-        responseData = data;
+        responseData = await response.json();
         console.log('Successfully called Claude API');
         break;
       } catch (error) {
