@@ -281,10 +281,15 @@ export const ComparisonView = ({ result, documentNames }: ComparisonViewProps) =
                     <div className="p-4 space-y-2">
                       {result.tables[0].rows.map((row, i) => {
                         const { field, values } = getDocumentValues(row) as any;
+                        // Check if we have values for this document
+                        const value = values && values[docIndex + 2] ? values[docIndex + 2] : '';
+                        
                         return (
                           <div key={i} className="py-1">
                             <div className="font-medium text-sm">{field}</div>
-                            <div className="text-sm">{values && values[docIndex + 2] || ''}</div>
+                            <div className="text-sm">
+                              {value || <span className="text-gray-400 italic">No data</span>}
+                            </div>
                           </div>
                         );
                       })}

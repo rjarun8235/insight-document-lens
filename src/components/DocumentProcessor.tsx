@@ -101,6 +101,46 @@ export function DocumentProcessor() {
     }
   };
 
+  const processDocuments = async () => {
+    if (parsedDocuments.length < 2) {
+      setError('Please upload at least two documents for comparison.');
+      return;
+    }
+    
+    try {
+      setIsProcessing(true);
+      setError(null);
+      setProcessingProgress(25); // Start processing
+      
+      // Get document names for better display in the comparison
+      const docNames = files.map(file => file.name);
+      setDocumentNames(docNames);
+      
+      // Parse any remaining documents
+      const parsed = [...parsedDocuments];
+      
+      // Update progress
+      setProcessingProgress(50); // Parsing complete, now analyzing
+      
+      // Get the comparison type instruction
+      const response = await claudeService.analyzeDocuments(parsed, getComparisonInstruction());
+      
+      // Extract the result and token usage
+      const { result, tokenUsage } = response;
+      
+      // Update state with the comparison result
+      setComparisonResult(result);
+      setTokenUsage(tokenUsage);
+      setProcessingProgress(100); // Processing complete
+    } catch (error) {
+      console.error('Error processing documents:', error);
+      setError(`Error processing documents: ${error.message}`);
+      setProcessingProgress(0); // Reset progress on error
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   const analyzeFiles = async (parsed: ParsedDocument[]) => {
     try {
       setProcessingProgress(50); // Parsing complete, now analyzing
@@ -155,7 +195,7 @@ export function DocumentProcessor() {
       
       if (parsed.length > 0) {
         // Then analyze them
-        await analyzeFiles(parsed);
+        await processDocuments();
       }
     } catch (err) {
       console.error('Comparison process failed:', err);

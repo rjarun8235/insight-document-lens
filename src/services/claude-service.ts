@@ -310,6 +310,15 @@ Quotes that highlight issues.
 Your analysis of issues based only on the quotes above.
 </analysis>`;
 
+    // Add specific instructions for handling empty or missing values
+    const enhancedSystemMessage = `${systemMessage}
+
+IMPORTANT ADDITIONAL INSTRUCTIONS:
+- For any document where you cannot extract specific fields, clearly indicate this with "No data available" or similar text.
+- If a field exists in one document but not in others, still include that field in your comparison table with empty values for documents where it's not present.
+- Always provide values for ALL documents in the comparison, even if some documents have minimal or no extractable data.
+- If a document appears to be completely different from others (different document type), note this in your analysis.`;
+
     // Use the retry mechanism for the API call
     try {
       return await callWithRetry(async () => {
@@ -323,7 +332,7 @@ Your analysis of issues based only on the quotes above.
           const payload = {
             model: claudeModel,
             max_tokens: 4000,
-            system: systemMessage,
+            system: enhancedSystemMessage,
             messages: [
               {
                 role: "user",
@@ -337,26 +346,25 @@ Your analysis of issues based only on the quotes above.
           // Check if we're in a browser environment
           const isBrowser = typeof window !== 'undefined';
           
-          // In browser environments, we need to handle CORS issues
-          if (isBrowser) {
-            try {
-              // First try to use the SDK directly (will work in deployed environments where CORS is handled)
-              const response = await this.anthropic.messages.create(payload);
-              responseData = response;
-            } catch (error) {
-              // If direct SDK call fails due to CORS, fall back to mock data in development
-              if (import.meta.env.DEV) {
-                console.warn('API call failed, using mock data in development:', error);
-                return { result: getMockResponse(), tokenUsage: { input: 0, output: 0, cost: 0 } };
-              } else {
-                // In production, rethrow the error
-                throw error;
-              }
-            }
-          } else {
-            // In non-browser environments (Node.js), use the SDK directly
+          // Try to use the SDK directly first
+          try {
+            // Use the SDK directly (will work in environments where CORS is handled)
             const response = await this.anthropic.messages.create(payload);
             responseData = response;
+            console.log('Successfully used SDK directly for Claude API call');
+          } catch (error) {
+            // If direct SDK call fails due to CORS or other issues
+            console.warn('API call failed:', error);
+            
+            // In development, fall back to mock data
+            if (import.meta.env.DEV || import.meta.env.VITE_USE_MOCK_API === 'true') {
+              console.warn('Using mock data as fallback');
+              return { result: getMockResponse(), tokenUsage: { input: 0, output: 0, cost: 0 } };
+            } else {
+              // In production, show a clear error
+              console.error('Unable to connect to Claude API:', error);
+              throw new Error('Unable to connect to Claude API. Please check your network connection and API key.');
+            }
           }
           
           // Log token usage to see cache effectiveness
