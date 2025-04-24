@@ -1,7 +1,6 @@
 import axios from 'axios';
 import { ComparisonResult, ComparisonTable, ParsedDocument } from '../lib/types';
 import { callWithRetry, formatErrorMessage } from '@/utils/api-helpers';
-import { fetchApiKeyFromSupabase } from '@/lib/supabase';
 import { supabase } from "@/integrations/supabase/client";
 
 // Helper to convert a File object (image) to base64 and media type
@@ -207,31 +206,9 @@ export default class ClaudeService {
   private apiKey: string;
 
   constructor() {
-    // Initialize with empty API key - will be set by fetchApiKey()
+    // We don't need to fetch the API key anymore since the proxy handles it
+    // Just initialize with empty string as we'll use the proxy
     this.apiKey = '';
-    
-    // Check environment variable if available (for development)
-    if (import.meta.env.VITE_ANTHROPIC_API_KEY) {
-      this.apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY;
-    } else {
-      // Will need to fetch from Supabase
-      this.fetchApiKey();
-    }
-  }
-  
-  private async fetchApiKey() {
-    try {
-      // Fetch API key from Supabase
-      const apiKey = await fetchApiKeyFromSupabase();
-      
-      if (apiKey) {
-        this.apiKey = apiKey;
-      } else {
-        console.warn('API key not found in Supabase. Using empty key.');
-      }
-    } catch (error) {
-      console.error('Failed to fetch API key:', error);
-    }
   }
   
   async callClaudeApi(payload: any): Promise<any> {

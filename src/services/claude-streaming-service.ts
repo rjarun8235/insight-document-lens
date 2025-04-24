@@ -1,6 +1,5 @@
 // Import required dependencies
 import { ComparisonResult, ComparisonTable } from '@/lib/types';
-import { fetchApiKeyFromSupabase } from '@/lib/supabase';
 import { supabase } from "@/integrations/supabase/client";
 
 // Helper to convert a File object (image) to base64 and media type
@@ -45,23 +44,6 @@ export async function streamAnalyzeDocuments(
   }
 ) {
   try {
-    // Get API key from environment variable or Supabase
-    let apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY || '';
-    
-    if (!apiKey) {
-      console.log('No API key in env, fetching from Supabase...');
-      try {
-        apiKey = await fetchApiKeyFromSupabase();
-      } catch (error) {
-        console.error('Error fetching API key from Supabase:', error);
-        throw new Error('Failed to get API key. Please check your configuration.');
-      }
-    }
-    
-    if (!apiKey) {
-      throw new Error('No API key available. Please set VITE_ANTHROPIC_API_KEY or configure Supabase.');
-    }
-    
     // Get Claude model from environment variables or use default
     const claudeModel = import.meta.env.VITE_CLAUDE_MODEL || "claude-3-5-haiku-20241022";
     
