@@ -1,6 +1,7 @@
 // Import Anthropic SDK
 import Anthropic from '@anthropic-ai/sdk';
 import { ComparisonResult, ComparisonTable } from '@/lib/types';
+import { fetchApiKeyFromSupabase } from '@/lib/supabase';
 
 // Helper to convert a File object (image) to base64 and media type
 async function fileToBase64(file: File): Promise<{base64: string, mediaType: string}> {
@@ -35,20 +36,33 @@ export async function streamAnalyzeDocuments(
   callbacks: StreamCallbacks = {},
   useCache: boolean = true
 ): Promise<void> {
-  // Get Claude API Key
-  const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY || '';
-  if (!apiKey) {
-    const error = new Error('Anthropic API key is missing.');
-    if (callbacks.onError) callbacks.onError(error);
-    throw error;
-  }
-
-  const anthropic = new Anthropic({ apiKey });
-
   try {
-    // Signal start of streaming
+    // Start callback if provided
     if (callbacks.onStart) callbacks.onStart();
-    if (callbacks.onProgress) callbacks.onProgress(0);
+    
+    // Get Claude API Key - first try environment variable
+    let apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY || '';
+    
+    // If no API key in environment, try to fetch from Supabase
+    if (!apiKey) {
+      try {
+        apiKey = await fetchApiKeyFromSupabase() || '';
+      } catch (fetchError) {
+        console.error('Failed to fetch API key:', fetchError);
+      }
+    }
+    
+    // Check if we have an API key after all attempts
+    if (!apiKey) {
+      const error = new Error('Anthropic API key is missing. Please configure it in Supabase or environment variables.');
+      if (callbacks.onError) callbacks.onError(error);
+      throw error;
+    }
+
+    const anthropic = new Anthropic({ 
+      apiKey,
+      dangerouslyAllowBrowser: true
+    });
 
     // Get Claude model from environment variables or use default
     const claudeModel = import.meta.env.VITE_CLAUDE_MODEL || "claude-3-5-haiku-20241022";

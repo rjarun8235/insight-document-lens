@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import axios from 'axios';
 import { ComparisonResult, ComparisonTable, ParsedDocument } from '../lib/types';
 import { callWithRetry, formatErrorMessage } from '@/utils/api-helpers';
+import { fetchApiKeyFromSupabase } from '@/lib/supabase';
 
 // Helper to convert a File object (image) to base64 and media type
 async function fileToBase64(file: File): Promise<{base64: string, mediaType: string}> {
@@ -105,27 +106,173 @@ function getMockResponse(): ComparisonResult {
   };
 }
 
+// Instruction builder for various doc types (esp. logistics: packing-list, invoice, bill-of-entry)
+export function prepareInstructions(comparisonType: string): string {
+  // Default instruction for general document comparison
+  let instruction = `Please analyze these documents and provide a detailed comparison. Extract key information into a comparison table, then provide analysis in the required sections.`;
+  
+  // Specialized instructions based on document type
+  switch (comparisonType.toLowerCase()) {
+    case 'packing-list':
+    case 'packing-lists':
+      instruction = `Please analyze these packing lists and provide a detailed comparison. 
+      
+Extract key information such as:
+- Shipper and consignee details
+- Invoice/PO references
+- Package counts and types
+- Product descriptions
+- Quantities
+- Weights and measurements
+- Country of origin
+- Shipping marks
+
+Organize this information into a comparison table, then provide analysis in the required sections. Pay special attention to:
+- Quantity discrepancies
+- Weight or measurement inconsistencies
+- Missing or additional items
+- Description mismatches
+- Package count differences`;
+      break;
+      
+    case 'invoice':
+    case 'invoices':
+      instruction = `Please analyze these invoices and provide a detailed comparison. 
+      
+Extract key information such as:
+- Seller and buyer details
+- Invoice numbers and dates
+- Payment terms
+- Currency and total amounts
+- Itemized product listings
+- Unit prices and quantities
+- Discounts or additional charges
+- Tax information
+- Delivery terms (Incoterms)
+
+Organize this information into a comparison table, then provide analysis in the required sections. Pay special attention to:
+- Price discrepancies
+- Quantity inconsistencies
+- Missing or additional items
+- Payment term differences
+- Currency or total amount mismatches`;
+      break;
+      
+    case 'bill-of-lading':
+    case 'bills-of-lading':
+      instruction = `Please analyze these bills of lading and provide a detailed comparison. 
+      
+Extract key information such as:
+- Shipper, consignee and notify party details
+- BL numbers and dates
+- Vessel and voyage information
+- Ports of loading and discharge
+- Container and seal numbers
+- Description of goods
+- Package counts
+- Weights and measurements
+- Freight terms
+- Special clauses or remarks
+
+Organize this information into a comparison table, then provide analysis in the required sections. Pay special attention to:
+- Vessel or voyage inconsistencies
+- Port information discrepancies
+- Container or seal number mismatches
+- Description of goods inconsistencies
+- Weight or measurement discrepancies
+- Missing or additional clauses`;
+      break;
+      
+    case 'bill-of-entry':
+    case 'bills-of-entry':
+      instruction = `Please analyze these bills of entry and provide a detailed comparison. 
+      
+Extract key information such as:
+- Entry numbers and dates
+- Importer and exporter information
+- Customs broker details
+- Port of loading and discharge
+- Country of origin
+- HS codes and product descriptions
+- Duty and tax assessments
+- Total declared value
+- Exchange rates
+- Import license details
+- Customs station
+
+Organize this information into a comparison table, then provide analysis in the required sections. Pay special attention to:
+- HS code discrepancies
+- Duty calculation errors
+- Value declaration inconsistencies
+- Country of origin mismatches
+- Missing or additional items`;
+      break;
+
+    case 'logistics':
+      instruction = `Please analyze these logistics documents and provide a detailed comparison. These may include Bills of Lading, Invoices, Packing Lists, or other shipping documents.
+      
+First identify the document types, then extract all relevant information such as:
+- Parties involved (shipper, consignee, notify party)
+- Reference numbers (BL, invoice, PO numbers)
+- Dates (issue, shipping, delivery)
+- Goods description and quantities
+- Packaging details
+- Weights and measurements
+- Origin and destination
+- Vessel/voyage/container details if applicable
+- Terms and conditions
+
+Organize this information into a comparison table, then provide analysis in the required sections. Pay special attention to any discrepancies between the documents that could cause issues in the logistics process.`;
+      break;
+  }
+  
+  return instruction;
+}
+
 // Claude API service
 export default class ClaudeService {
   private anthropic: Anthropic;
   private apiKey: string;
 
   constructor() {
-    // Encoded API key - will be decoded at runtime
-    const encodedKey = "c2stYW50LWFwaTA3LTdyVWxwQ3ZNQldrMnB1S0JoZ1JIdzRhTy1TeDd4ekUyQzkwYl9wOHdiU0FNSkpZalBNWFppSjNaamN5TE9BSVcyOEVNM3Rvb29XTERqMkYyR0l2ZjFnLWptcm5vZ0FB";
+    // Initialize with empty API key - will be set by fetchApiKey()
+    this.apiKey = '';
     
-    // Decode the API key
-    this.apiKey = atob(encodedKey);
-    
-    // Fallback to environment variable if available
+    // Check environment variable if available (for development)
     if (import.meta.env.VITE_ANTHROPIC_API_KEY) {
       this.apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY;
+      this.initAnthropicClient();
+    } else {
+      // Will need to fetch from Supabase
+      this.fetchApiKey();
     }
-    
+  }
+  
+  private initAnthropicClient() {
     this.anthropic = new Anthropic({
       apiKey: this.apiKey,
       dangerouslyAllowBrowser: true
     });
+  }
+  
+  private async fetchApiKey() {
+    try {
+      // Fetch API key from Supabase
+      const apiKey = await fetchApiKeyFromSupabase();
+      
+      if (apiKey) {
+        this.apiKey = apiKey;
+      } else {
+        console.warn('API key not found in Supabase. Using empty key.');
+      }
+      
+      // Initialize client with whatever key we have (might be empty)
+      this.initAnthropicClient();
+    } catch (error) {
+      console.error('Failed to fetch API key:', error);
+      // Initialize with empty key as fallback
+      this.initAnthropicClient();
+    }
   }
   
   async callClaudeApi(payload: any): Promise<any> {
@@ -592,145 +739,5 @@ IMPORTANT ADDITIONAL INSTRUCTIONS:
       console.error('Error calling Claude API:', error);
       throw new Error(formatErrorMessage(error));
     }
-  }
-
-  // Instruction builder for various doc types (esp. logistics: packing-list, invoice, bill-of-entry)
-  prepareInstructions(comparisonType: string): string {
-    // Default instruction for general document comparison
-    let instruction = `Please analyze these documents and provide a detailed comparison. Extract key information into a comparison table, then provide analysis in the required sections.`;
-    
-    // Customize instructions based on document type
-    switch (comparisonType.toLowerCase()) {
-      case 'invoice':
-      case 'invoices':
-        instruction = `Please analyze these invoices and provide a detailed comparison. 
-        
-Extract key information such as:
-- Invoice numbers and dates
-- Buyer and seller information
-- Item descriptions, quantities, and prices
-- Total amounts and payment terms
-- Tax information
-- Shipping details
-- Currency and exchange rates
-- Payment terms and due dates
-- Discount information
-- Special notes or terms
-
-Organize this information into a comparison table, then provide analysis in the required sections. Pay special attention to:
-- Price discrepancies between documents
-- Quantity discrepancies between documents
-- Date inconsistencies
-- Missing or additional items
-- Tax calculation errors
-- Total amount calculation errors`;
-        break;
-        
-      case 'packing-list':
-      case 'packing-lists':
-        instruction = `Please analyze these packing lists and provide a detailed comparison. 
-        
-Extract key information such as:
-- Shipment references and dates
-- Consignee and shipper information
-- Item descriptions, quantities, weights, and dimensions
-- Package counts and types
-- Special handling instructions
-- Total gross and net weights
-- Container numbers and seals
-- Marks and numbers
-- Country of origin
-- Shipping marks
-- Dimensions and volume calculations
-
-Organize this information into a comparison table, then provide analysis in the required sections. Pay special attention to:
-- Quantity discrepancies between documents
-- Weight discrepancies between documents
-- Missing or additional items
-- Packaging type inconsistencies
-- Dimension or volume calculation errors
-- Shipping mark inconsistencies`;
-        break;
-        
-      case 'bill-of-lading':
-      case 'bl':
-      case 'bills-of-lading':
-        instruction = `Please analyze these Bills of Lading (BL) and provide a detailed comparison. 
-        
-Extract key information such as:
-- BL numbers and dates
-- Shipper/exporter information
-- Consignee information
-- Notify party details
-- Vessel name and voyage number
-- Port of loading and discharge
-- Place of receipt and delivery
-- Container numbers and seal numbers
-- Marks and numbers
-- Description of goods and packages
-- Gross weight and measurement
-- Freight terms (prepaid or collect)
-- Special instructions or clauses
-
-Organize this information into a comparison table, then provide analysis in the required sections. Pay special attention to:
-- Discrepancies in consignee or shipper details
-- Vessel or voyage inconsistencies
-- Port information discrepancies
-- Container or seal number mismatches
-- Description of goods inconsistencies
-- Weight or measurement discrepancies
-- Missing or additional clauses`;
-        break;
-        
-      case 'bill-of-entry':
-      case 'bills-of-entry':
-        instruction = `Please analyze these bills of entry and provide a detailed comparison. 
-        
-Extract key information such as:
-- Entry numbers and dates
-- Importer and exporter information
-- Customs broker details
-- Port of loading and discharge
-- Country of origin
-- HS codes and product descriptions
-- Duty and tax assessments
-- Total declared value
-- Exchange rates
-- Import license details
-- Customs station
-
-Organize this information into a comparison table, then provide analysis in the required sections. Pay special attention to:
-- HS code discrepancies
-- Duty calculation errors
-- Value declaration inconsistencies
-- Country of origin mismatches
-- Missing or additional items`;
-        break;
-
-      case 'logistics':
-        instruction = `Please analyze these logistics documents and provide a detailed comparison. These may include Bills of Lading, Invoices, Packing Lists, or other shipping documents.
-        
-Extract key information such as:
-- Document numbers and dates
-- Shipper/exporter and consignee information
-- Vessel/voyage details if present
-- Item descriptions, quantities, weights, and dimensions
-- Package counts and types
-- Container and seal numbers if present
-- Ports of loading and discharge if present
-- Special handling instructions
-- Values and payment terms if present
-
-Organize this information into a comparison table, then provide analysis in the required sections. Pay special attention to:
-- Cross-document consistency for the same shipment
-- Quantity discrepancies between documents
-- Weight or measurement discrepancies
-- Description inconsistencies
-- Date mismatches
-- Missing information in one document that appears in others`;
-        break;
-    }
-    
-    return instruction;
   }
 }
