@@ -6,15 +6,17 @@ import { supabase } from "@/integrations/supabase/client";
  */
 export async function fetchApiKeyFromSupabase(): Promise<string | null> {
   try {
-    // Fetch API key from the Supabase Edge Function
-    const response = await fetch('https://cbrgpzdxttzlvvryysaf.supabase.co/functions/v1/serve-anthropic-api-key');
+    // Use the Supabase client to invoke the Edge Function
+    const { data, error } = await supabase.functions.invoke('serve-anthropic-api-key', {
+      // No body needed for this function, but you could add parameters here if needed
+    });
     
-    if (!response.ok) {
-      throw new Error(`Failed to fetch API key: ${response.status} ${response.statusText}`);
+    if (error) {
+      console.error('Supabase function error:', error);
+      return null;
     }
     
-    const data = await response.json();
-    return data.apiKey || null;
+    return data?.apiKey || null;
   } catch (error) {
     console.error('Error fetching API key from Supabase:', error);
     return null;
