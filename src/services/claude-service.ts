@@ -40,6 +40,44 @@ async function fileToBase64(file: File): Promise<{base64: string, mediaType: str
   });
 }
 
+// Helper to convert a URL-based image to base64
+async function urlToBase64(url: string): Promise<{base64: string, mediaType: string}> {
+  try {
+    // Determine media type from URL extension
+    let mediaType = 'image/jpeg'; // Default
+    if (url.toLowerCase().endsWith('.png')) {
+      mediaType = 'image/png';
+    } else if (url.toLowerCase().endsWith('.gif')) {
+      mediaType = 'image/gif';
+    } else if (url.toLowerCase().endsWith('.webp')) {
+      mediaType = 'image/webp';
+    } else if (url.toLowerCase().endsWith('.pdf')) {
+      mediaType = 'application/pdf';
+    }
+    
+    // Fetch the image
+    const response = await fetch(url);
+    const blob = await response.blob();
+    
+    // Convert blob to base64
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = function() {
+        const base64 = (reader.result as string).split(',')[1];
+        resolve({
+          base64,
+          mediaType
+        });
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  } catch (error) {
+    console.error('Error converting URL to base64:', error);
+    throw error;
+  }
+}
+
 // Mock response for development when API is unavailable
 function getMockResponse(): ComparisonResult {
   console.log('Using mock response due to API connection issues');
@@ -318,14 +356,15 @@ export default class ClaudeService {
                 // Convert PDF to base64
                 const base64Data = await fileToBase64(doc.image);
                 
-                // Return as document type
+                // Return as document type with the latest API format
                 return {
                   type: "document",
                   source: {
                     type: "base64",
                     media_type: "application/pdf",
                     data: base64Data.base64
-                  }
+                  },
+                  cache_control: { type: "ephemeral" }
                 };
               } else {
                 // Image (with base64)
@@ -348,13 +387,15 @@ export default class ClaudeService {
                 
                 console.log(`Image: ${doc.image.name}, Size: ${width}x${height}, Estimated tokens: ${imageTokenEstimate}`);
                 
+                // Create image content object following Claude's latest API format
                 const imageContent = {
                   type: "image",
                   source: {
                     type: "base64",
                     media_type: mediaType,
-                    data: base64,
-                  }
+                    data: base64
+                  },
+                  cache_control: { type: "ephemeral" }
                 };
 
                 // Add associated OCR text (if present from front-end parser)

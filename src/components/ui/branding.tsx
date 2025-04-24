@@ -23,6 +23,13 @@ export function Branding({
     lg: 'text-2xl md:text-3xl'
   };
 
+  // Logo size classes
+  const logoSizeClasses = {
+    sm: 'w-8 h-8',
+    md: 'w-10 h-10',
+    lg: 'w-12 h-12'
+  };
+
   // Product name and company details
   const productName = "DocLens";
   const companyName = "TSV Global Solutions Pvt Limited";
@@ -30,12 +37,12 @@ export function Branding({
 
   return (
     <div className={cn("flex items-center space-x-2", className)}>
-      {/* Logo Placeholder - Replace with actual logo */}
+      {/* Logo */}
       <div className={cn(
-        "flex items-center justify-center bg-primary text-primary-foreground rounded-md font-bold",
-        size === 'sm' ? 'w-8 h-8 text-sm' : size === 'md' ? 'w-10 h-10 text-base' : 'w-12 h-12 text-lg'
+        "flex items-center justify-center rounded-md overflow-hidden",
+        logoSizeClasses[size]
       )}>
-        DL
+        <img src="/logo.png" alt="DocLens Logo" className="w-full h-full object-contain" />
       </div>
       
       <div className="flex flex-col">
@@ -55,27 +62,27 @@ export function Branding({
 }
 
 /**
- * Favicon component - can be used to generate a favicon dynamically
- * or as a placeholder until a proper favicon is created
+ * Favicon component - uses the favicon.png from the public directory
  */
 export function FaviconPlaceholder() {
-  return (
-    <svg
-      width="32"
-      height="32"
-      viewBox="0 0 32 32"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      <rect width="32" height="32" rx="4" fill="#0F172A" />
-      <path
-        d="M8 10H24M8 16H24M8 22H16"
-        stroke="white"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <circle cx="22" cy="22" r="4" fill="#2563EB" />
-    </svg>
-  );
+  // This is a helper component to remind developers to update the favicon
+  // The actual favicon should be set in the index.html file
+  
+  React.useEffect(() => {
+    // Check if favicon is already set
+    const existingFavicon = document.querySelector('link[rel="icon"]');
+    
+    // If no favicon is set, set it programmatically
+    if (!existingFavicon) {
+      const favicon = document.createElement('link');
+      favicon.rel = 'icon';
+      favicon.href = '/favicon.png';
+      favicon.type = 'image/png';
+      document.head.appendChild(favicon);
+      
+      console.log('Favicon set programmatically');
+    }
+  }, []);
+  
+  return null; // This component doesn't render anything
 }
