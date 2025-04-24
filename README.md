@@ -45,8 +45,10 @@ cd <YOUR_PROJECT_NAME>
 # Step 3: Install the necessary dependencies.
 npm i
 
-# Step 4: Create a .env file with your Claude API key
-echo "VITE_ANTHROPIC_API_KEY=your-api-key" > .env
+# Step 4: Set up environment variables
+cp .env.example .env
+# Edit the .env file and add your Claude API key
+# IMPORTANT: Never commit your .env file with real API keys
 
 # Step 5: Start the development server with auto-reloading and an instant preview.
 npm run dev
@@ -99,7 +101,31 @@ This project is built with:
 
 ## How can I deploy this project?
 
-Simply open [Lovable](https://lovable.dev/projects/b30d0fe7-5460-476b-9a15-b70a4e83dae4) and click on Share -> Publish.
+This project can be deployed to any static hosting service such as Netlify, Vercel, GitHub Pages, or AWS S3.
+
+## Environment Variables and Security
+
+This application requires an Anthropic Claude API key to function. For security reasons:
+
+1. **Never commit API keys to version control**
+   - The `.env` file is included in `.gitignore` to prevent accidental commits
+   - Use `.env.example` as a template for required environment variables
+
+2. **Required Environment Variables:**
+   - `VITE_ANTHROPIC_API_KEY`: Your Claude API key from Anthropic
+   - `VITE_CLAUDE_MODEL` (optional): The Claude model to use (defaults to "claude-3-5-sonnet-20240620")
+   - `VITE_USE_MOCK_API` (optional): Set to "true" to use mock data in development
+
+3. **For Production Deployments:**
+   - Set environment variables in your hosting platform's settings
+   - Many platforms (Netlify, Vercel, etc.) provide secure environment variable management
+   - Consider using environment-specific settings for development vs. production
+
+4. **API Key Security:**
+   - Treat your API key like a password
+   - Rotate keys periodically
+   - Use environment-specific keys for development and production
+   - Consider implementing rate limiting and monitoring for your API usage
 
 ## Can I connect a custom domain to my Lovable project?
 
@@ -108,3 +134,5 @@ Yes, you can!
 To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
 
 Read more here: [Setting up a custom domain](https://docs.lovable.dev/tips-tricks/custom-domain#step-by-step-guide)
+
+## License
