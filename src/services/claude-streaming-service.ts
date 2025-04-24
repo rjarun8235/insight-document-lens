@@ -152,12 +152,12 @@ export async function streamAnalyzeDocuments(
       stream: true
     };
     
-    // Use direct fetch to the Edge Function instead of Supabase client
-    // This avoids the x-client-info header that causes CORS issues
+    // Use direct fetch with minimal headers to avoid CORS issues
     const response = await fetch('https://cbrgpzdxttzlvvryysaf.supabase.co/functions/v1/claude-api-proxy', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
+        // No other headers to avoid CORS issues
       },
       body: JSON.stringify(payload)
     });

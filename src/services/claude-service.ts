@@ -1,4 +1,3 @@
-import axios from 'axios';
 import { ComparisonResult, ComparisonTable, ParsedDocument } from '../lib/types';
 import { callWithRetry, formatErrorMessage } from '@/utils/api-helpers';
 
@@ -219,12 +218,12 @@ export default class ClaudeService {
       try {
         console.log('Calling Claude API...');
         
-        // Use direct fetch to the Edge Function instead of Supabase client
-        // This avoids the x-client-info header that causes CORS issues
+        // Use direct fetch with minimal headers to avoid CORS issues
         const response = await fetch('https://cbrgpzdxttzlvvryysaf.supabase.co/functions/v1/claude-api-proxy', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
+            // No other headers to avoid CORS issues
           },
           body: JSON.stringify(payload)
         });
