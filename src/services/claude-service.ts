@@ -358,7 +358,7 @@ IMPORTANT ADDITIONAL INSTRUCTIONS:
             
             // In development, fall back to mock data
             if (import.meta.env.DEV || import.meta.env.VITE_USE_MOCK_API === 'true') {
-              console.warn('Using mock data as fallback');
+              console.warn('Using mock data as fallback in development');
               return { result: getMockResponse(), tokenUsage: { input: 0, output: 0, cost: 0 } };
             } else {
               // In production, show a clear error
