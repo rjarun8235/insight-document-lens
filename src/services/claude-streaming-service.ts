@@ -1,5 +1,4 @@
-// Import Anthropic SDK
-import Anthropic from '@anthropic-ai/sdk';
+// Import required dependencies
 import { ComparisonResult, ComparisonTable } from '@/lib/types';
 import { fetchApiKeyFromSupabase } from '@/lib/supabase';
 
@@ -31,45 +30,43 @@ export interface StreamCallbacks {
 
 // Stream Claude analysis with callbacks
 export async function streamAnalyzeDocuments(
-  documents: (string | { image: File, text?: string })[],
-  instruction: string,
-  callbacks: StreamCallbacks = {},
-  useCache: boolean = true
-): Promise<void> {
+  documents: any[],
+  options: {
+    instruction: string;
+    useCache?: boolean;
+  },
+  callbacks: {
+    onChunk?: (chunk: string) => void;
+    onToken?: (token: string) => void;
+    onComplete?: (result: ComparisonResult) => void;
+    onProgress?: (progress: number) => void;
+    onError?: (error: Error) => void;
+  }
+) {
   try {
-    // Start callback if provided
-    if (callbacks.onStart) callbacks.onStart();
-    
-    // Get Claude API Key - first try environment variable
+    // Get API key from environment variable or Supabase
     let apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY || '';
     
-    // If no API key in environment, try to fetch from Supabase
     if (!apiKey) {
+      console.log('No API key in env, fetching from Supabase...');
       try {
-        apiKey = await fetchApiKeyFromSupabase() || '';
-      } catch (fetchError) {
-        console.error('Failed to fetch API key:', fetchError);
+        apiKey = await fetchApiKeyFromSupabase();
+      } catch (error) {
+        console.error('Error fetching API key from Supabase:', error);
+        throw new Error('Failed to get API key. Please check your configuration.');
       }
     }
     
-    // Check if we have an API key after all attempts
     if (!apiKey) {
-      const error = new Error('Anthropic API key is missing. Please configure it in Supabase or environment variables.');
-      if (callbacks.onError) callbacks.onError(error);
-      throw error;
+      throw new Error('No API key available. Please set VITE_ANTHROPIC_API_KEY or configure Supabase.');
     }
-
-    const anthropic = new Anthropic({ 
-      apiKey,
-      dangerouslyAllowBrowser: true
-    });
-
+    
     // Get Claude model from environment variables or use default
     const claudeModel = import.meta.env.VITE_CLAUDE_MODEL || "claude-3-5-haiku-20241022";
-
+    
     // Prepare content for Claude API
-    let userContent: any[] = [{ type: "text", text: instruction }];
-
+    let userContent: any[] = [{ type: "text", text: options.instruction }];
+    
     // Create system message with document content and instructions
     const systemMessage = `You are an expert document analyzer. Analyze the provided documents and extract key information.
 
@@ -94,13 +91,13 @@ export async function streamAnalyzeDocuments(
       <analysis>
       Your analysis based strictly on the quotes
       </analysis>`;
-
+    
     // Prepare document content
     let systemContent: any[] = [];
-
+    
     // Check if we have images
     const hasImage = documents.some(doc => typeof doc === 'object');
-
+    
     if (hasImage) {
       // Images + Text: each "doc" is either a string or { image, text? }
       const multimodalContent = await Promise.all(
@@ -110,7 +107,7 @@ export async function streamAnalyzeDocuments(
             return {
               type: "text",
               text: doc,
-              ...(useCache && { cache_control: { type: "ephemeral" } })
+              ...(options.useCache && { cache_control: { type: "ephemeral" } })
             };
           } else {
             // Image (with base64)
@@ -122,9 +119,9 @@ export async function streamAnalyzeDocuments(
                 media_type: mediaType,
                 data: base64,
               },
-              ...(useCache && { cache_control: { type: "ephemeral" } })
+              ...(options.useCache && { cache_control: { type: "ephemeral" } })
             };
-
+            
             // Add associated OCR text (if present from front-end parser)
             if (doc.text) {
               return [
@@ -132,16 +129,16 @@ export async function streamAnalyzeDocuments(
                 {
                   type: "text",
                   text: doc.text,
-                  ...(useCache && { cache_control: { type: "ephemeral" } })
+                  ...(options.useCache && { cache_control: { type: "ephemeral" } })
                 }
               ];
             }
-
+            
             return imageContent;
           }
         })
       );
-
+      
       // Put document content in system message for caching
       systemContent = multimodalContent.flat();
     } else {
@@ -149,89 +146,99 @@ export async function streamAnalyzeDocuments(
       systemContent = documents.map(doc => ({
         type: "text",
         text: typeof doc === "string" ? doc : (doc.text || ''),
-        ...(useCache && { cache_control: { type: "ephemeral" } })
+        ...(options.useCache && { cache_control: { type: "ephemeral" } })
       }));
     }
-
-    // Variables to track streaming progress
-    let fullResponse = '';
-    let tokenCount = 0;
-    const estimatedTotalTokens = 3000; // Rough estimate
-
-    // Create a message with streaming
-    const messageParams: any = {
-      model: claudeModel,
-      max_tokens: 5000,
-      system: [
-        { type: "text", text: systemMessage },
-        ...systemContent
-      ],
-      messages: [
-        {
-          role: "user",
-          content: userContent
-        }
-      ]
-    };
-
+    
     // Signal that we're starting to stream
     if (callbacks.onProgress) callbacks.onProgress(5);
-
-    try {
-      // Create a streaming response
-      // @ts-ignore - Ignore the stream property TypeScript error
-      const response = await anthropic.messages.create({
-        ...messageParams,
-        stream: true
-      });
-
-      // Process the stream
-      // @ts-ignore - Ignore the async iterator TypeScript error
-      for await (const chunk of response) {
-        if (chunk.type === 'content_block_delta' && chunk.delta && chunk.delta.text) {
-          const token = chunk.delta.text;
-          fullResponse += token;
-          tokenCount++;
-
-          // Call token callback if provided
-          if (callbacks.onToken) callbacks.onToken(token);
-
-          // Accumulate tokens into chunks and call chunk callback
-          if (tokenCount % 20 === 0 && callbacks.onChunk) {
-            callbacks.onChunk(fullResponse);
+    
+    // Make direct API call with streaming
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify({
+        model: claudeModel,
+        system: systemMessage,
+        messages: [
+          {
+            role: "user",
+            content: [
+              ...userContent,
+              ...systemContent
+            ]
           }
-
-          // Update progress (rough estimate)
-          if (callbacks.onProgress) {
-            const progress = Math.min(Math.round((tokenCount / estimatedTotalTokens) * 100), 99);
-            callbacks.onProgress(progress);
+        ],
+        max_tokens: 4000,
+        stream: true
+      })
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Claude API returned error: ${response.status} ${response.statusText}`);
+    }
+    
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new Error('Failed to get stream reader');
+    }
+    
+    let fullResponse = '';
+    const decoder = new TextDecoder();
+    
+    // Process the stream
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      
+      const chunk = decoder.decode(value);
+      const lines = chunk.split('\n').filter(line => line.trim() !== '');
+      
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = line.slice(6);
+          if (data === '[DONE]') continue;
+          
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.type === 'content_block_delta' && parsed.delta?.text) {
+              const text = parsed.delta.text;
+              callbacks.onChunk?.(text);
+              callbacks.onToken?.(text);
+              fullResponse += text;
+              
+              // Update progress (rough estimate)
+              if (callbacks.onProgress) {
+                const progress = Math.min(Math.round((fullResponse.length / 3000) * 100), 99);
+                callbacks.onProgress(progress);
+              }
+            }
+          } catch (e) {
+            console.warn('Error parsing streaming response:', e);
           }
         }
       }
-
-      // Final chunk callback with complete response
-      if (callbacks.onChunk) callbacks.onChunk(fullResponse);
-
-      // Parse the response to extract tables and sections
-      const result = parseClaudeResponse(fullResponse);
-
-      // Call complete callback with parsed result
-      if (callbacks.onComplete) {
-        callbacks.onComplete(result);
-        callbacks.onProgress?.(100);
-      }
-    } catch (streamError) {
-      console.error('Error in streaming:', streamError);
-      throw streamError;
     }
-
+    
+    // Parse the response to extract tables and sections
+    const result = parseClaudeResponse(fullResponse);
+    
+    // Call complete callback with parsed result
+    if (callbacks.onComplete) {
+      callbacks.onComplete(result);
+      callbacks.onProgress?.(100);
+    }
   } catch (error) {
-    console.error('Error streaming from Claude API:', error);
+    console.error('Error in streaming API call:', error);
     if (callbacks.onError) {
       callbacks.onError(error instanceof Error
         ? error
-        : new Error('Failed to analyze documents with Claude AI. Please try again.')
-      );
+        : new Error(String(error)));
     }
   }
 }

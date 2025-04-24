@@ -1,4 +1,3 @@
-import Anthropic from '@anthropic-ai/sdk';
 import axios from 'axios';
 import { ComparisonResult, ComparisonTable, ParsedDocument } from '../lib/types';
 import { callWithRetry, formatErrorMessage } from '@/utils/api-helpers';
@@ -77,33 +76,6 @@ async function urlToBase64(url: string): Promise<{base64: string, mediaType: str
     console.error('Error converting URL to base64:', error);
     throw error;
   }
-}
-
-// Mock response for development when API is unavailable
-function getMockResponse(): ComparisonResult {
-  console.log('Using mock response due to API connection issues');
-  return {
-    tables: [{
-      title: 'Document Comparison',
-      headers: ['Field', 'Document 1', 'Document 2'],
-      rows: [
-        ['Invoice Number', 'INV-2023-001', 'INV-2023-002'],
-        ['Date', '2023-10-15', '2023-10-16'],
-        ['Amount', '$1,200.00', '$1,500.00'],
-        ['Supplier', 'ABC Corp', 'ABC Corp'],
-        ['Items', '10 units of Product A', '15 units of Product A']
-      ]
-    }],
-    verification: "The documents appear to be valid invoices with consistent formatting.",
-    validation: "All required fields are present in both documents.",
-    review: "Both invoices follow standard formatting with minor differences in quantities and amounts.",
-    analysis: "The second invoice shows a 25% increase in both quantity and amount compared to the first invoice.",
-    summary: "Two invoices from the same supplier with different quantities and amounts.",
-    insights: "There appears to be a volume discount as the per-unit price remains consistent despite the increased quantity.",
-    recommendations: "Consider consolidating orders to take advantage of potential volume discounts.",
-    risks: "No significant risks identified in these standard invoices.",
-    issues: "No issues detected."
-  };
 }
 
 // Instruction builder for various doc types (esp. logistics: packing-list, invoice, bill-of-entry)
@@ -231,7 +203,6 @@ Organize this information into a comparison table, then provide analysis in the 
 
 // Claude API service
 export default class ClaudeService {
-  private anthropic: Anthropic;
   private apiKey: string;
 
   constructor() {
@@ -241,18 +212,10 @@ export default class ClaudeService {
     // Check environment variable if available (for development)
     if (import.meta.env.VITE_ANTHROPIC_API_KEY) {
       this.apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY;
-      this.initAnthropicClient();
     } else {
       // Will need to fetch from Supabase
       this.fetchApiKey();
     }
-  }
-  
-  private initAnthropicClient() {
-    this.anthropic = new Anthropic({
-      apiKey: this.apiKey,
-      dangerouslyAllowBrowser: true
-    });
   }
   
   private async fetchApiKey() {
@@ -265,13 +228,8 @@ export default class ClaudeService {
       } else {
         console.warn('API key not found in Supabase. Using empty key.');
       }
-      
-      // Initialize client with whatever key we have (might be empty)
-      this.initAnthropicClient();
     } catch (error) {
       console.error('Failed to fetch API key:', error);
-      // Initialize with empty key as fallback
-      this.initAnthropicClient();
     }
   }
   
@@ -284,20 +242,28 @@ export default class ClaudeService {
       try {
         console.log('Calling Claude API...');
         
-        // Direct API call using the Anthropic SDK
-        const response = await this.anthropic.messages.create(payload);
-        responseData = response;
+        // Direct API call with the CORS header
+        const response = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "x-api-key": this.apiKey,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+            "anthropic-dangerous-direct-browser-access": "true",
+          },
+          body: JSON.stringify(payload)
+        });
+        
+        if (!response.ok) {
+          throw new Error(`Claude API returned error: ${response.status} ${response.statusText}`);
+        }
+        
+        responseData = await response.json();
         console.log('Successfully called Claude API');
         break;
       } catch (error) {
         retryCount++;
         console.warn(`API call failed (attempt ${retryCount}/${maxRetries}):`, error);
-        
-        // In development, fall back to mock data
-        if (import.meta.env.DEV || import.meta.env.VITE_USE_MOCK_API === 'true') {
-          console.warn('Using mock data as fallback in development');
-          return { result: getMockResponse(), tokenUsage: { input: 0, output: 0, cost: 0 } };
-        }
         
         // If we've reached max retries, throw the error
         if (retryCount >= maxRetries) {
