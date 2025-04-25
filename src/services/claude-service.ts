@@ -83,6 +83,155 @@ export function prepareInstructions(comparisonType: string): string {
   
   // Specialized instructions based on document type
   switch (comparisonType.toLowerCase()) {
+    case 'logistics':
+      instruction = `Please analyze these logistics documents and provide a detailed comparison. 
+
+Extract and compare the following key fields across all documents:
+- Document Type (identify if it's a Bill of Lading, Invoice, Packing List, or Purchase Order)
+- Document Number/Reference
+- Shipper/Consignor details
+- Consignee details
+- Invoice/PO numbers and references
+- Dates (issue date, shipping date, delivery date)
+- Package counts and types
+- Product descriptions
+- Quantities
+- Weights (gross and net)
+- Measurements
+- Values and currency
+- Country of origin
+- Shipping marks and container numbers
+- Incoterms
+- Payment terms
+
+Organize this information into a comparison table, then provide analysis in the required sections. Pay special attention to:
+- Discrepancies between document types (e.g., Invoice vs. Purchase Order)
+- Mismatches in quantities, weights, or values
+- Inconsistencies in shipper/consignee information
+- Date discrepancies that might affect shipment timelines
+- Missing critical information in any document
+
+For Bills of Lading specifically, check:
+- Carrier information
+- Vessel/flight details
+- Port of loading and discharge
+- Notify party details
+- Whether it's a Master or House B/L
+
+For Invoices, check:
+- Invoice number matches references in other documents
+- Value and currency match Purchase Order
+- Payment terms and due dates
+- Tax/duty information
+
+For Packing Lists, check:
+- Package count matches B/L and Invoice
+- Weight details match across documents
+- Package markings and numbers
+
+For Purchase Orders, check:
+- PO number matches references in other documents
+- Terms and conditions
+- Delivery instructions
+- Price and quantity match invoice`;
+      break;
+    
+    case 'invoice-po':
+      instruction = `Please analyze these invoice and purchase order documents and provide a detailed comparison.
+
+Extract and compare the following key fields:
+- Document numbers (Invoice number, PO number)
+- Dates (Invoice date, PO date, delivery date)
+- Shipper/Vendor details
+- Consignee/Buyer details
+- Line items (product codes, descriptions)
+- Quantities
+- Unit prices
+- Total amounts
+- Currency
+- Payment terms
+- Delivery terms
+- Tax information
+
+Organize this information into a comparison table, then provide analysis in the required sections. Pay special attention to:
+- Price discrepancies between invoice and PO
+- Quantity differences
+- Additional charges on invoice not in PO
+- Missing items from either document
+- Date inconsistencies
+- Payment term differences`;
+      break;
+      
+    case 'bl-invoice':
+      instruction = `Please analyze these Bill of Lading and Invoice documents and provide a detailed comparison.
+
+Extract and compare the following key fields:
+- Document numbers (B/L number, Invoice number)
+- Dates (B/L date, Invoice date)
+- Shipper details
+- Consignee details
+- Notify party (if applicable)
+- Vessel/voyage or flight details
+- Port of loading and discharge
+- Description of goods
+- Package count and type
+- Weight and measurement
+- Freight terms
+- Container numbers
+- Marks and numbers
+- Value and currency
+
+Organize this information into a comparison table, then provide analysis in the required sections. Pay special attention to:
+- Discrepancies in shipper/consignee details
+- Package count or weight differences
+- Description of goods inconsistencies
+- Missing or additional information in either document`;
+      break;
+      
+    case 'bl-packinglist':
+      instruction = `Please analyze these Bill of Lading and Packing List documents and provide a detailed comparison.
+
+Extract and compare the following key fields:
+- Document numbers (B/L number, Packing List reference)
+- Dates
+- Shipper details
+- Consignee details
+- Description of goods
+- Package count and type
+- Weight (gross and net)
+- Measurement
+- Marks and numbers
+- Container numbers (if applicable)
+
+Organize this information into a comparison table, then provide analysis in the required sections. Pay special attention to:
+- Package count discrepancies
+- Weight differences
+- Inconsistent product descriptions
+- Missing packages or items`;
+      break;
+      
+    case 'invoice-packinglist':
+      instruction = `Please analyze these Invoice and Packing List documents and provide a detailed comparison.
+
+Extract and compare the following key fields:
+- Document numbers (Invoice number, Packing List reference)
+- Dates
+- Shipper/Vendor details
+- Consignee/Buyer details
+- Product details and descriptions
+- Quantities
+- Package count and type
+- Weight (gross and net)
+- Measurement
+- Value and currency
+
+Organize this information into a comparison table, then provide analysis in the required sections. Pay special attention to:
+- Quantity discrepancies
+- Package count differences
+- Weight inconsistencies
+- Missing or additional items`;
+      break;
+      
     case 'packing-list':
     case 'packing-lists':
       instruction = `Please analyze these packing lists and provide a detailed comparison. 
@@ -99,100 +248,123 @@ Extract key information such as:
 
 Organize this information into a comparison table, then provide analysis in the required sections. Pay special attention to:
 - Quantity discrepancies
-- Weight or measurement inconsistencies
-- Missing or additional items
-- Description mismatches
-- Package count differences`;
+- Weight differences
+- Package count inconsistencies
+- Product description variations`;
       break;
       
     case 'invoice':
     case 'invoices':
-      instruction = `Please analyze these invoices and provide a detailed comparison. 
+      instruction = `Please analyze these invoices and provide a detailed comparison.
       
 Extract key information such as:
-- Seller and buyer details
 - Invoice numbers and dates
-- Payment terms
-- Currency and total amounts
-- Itemized product listings
-- Unit prices and quantities
-- Discounts or additional charges
-- Tax information
-- Delivery terms (Incoterms)
+- Shipper/Vendor details
+- Consignee/Buyer details
+- Purchase order references
+- Payment terms and due dates
+- Currency and total values
+- Line items with descriptions
+- Quantities and unit prices
+- Tax and duty information
+- Shipping terms
 
 Organize this information into a comparison table, then provide analysis in the required sections. Pay special attention to:
-- Price discrepancies
-- Quantity inconsistencies
-- Missing or additional items
-- Payment term differences
-- Currency or total amount mismatches`;
+- Value discrepancies
+- Quantity differences
+- Missing or additional line items
+- Payment term variations
+- Currency inconsistencies`;
       break;
       
     case 'bill-of-lading':
     case 'bills-of-lading':
-      instruction = `Please analyze these bills of lading and provide a detailed comparison. 
+    case 'bl':
+      instruction = `Please analyze these Bills of Lading and provide a detailed comparison.
       
 Extract key information such as:
-- Shipper, consignee and notify party details
-- BL numbers and dates
-- Vessel and voyage information
-- Ports of loading and discharge
-- Container and seal numbers
-- Description of goods
-- Package counts
-- Weights and measurements
-- Freight terms
-- Special clauses or remarks
-
-Organize this information into a comparison table, then provide analysis in the required sections. Pay special attention to:
-- Vessel or voyage inconsistencies
-- Port information discrepancies
-- Container or seal number mismatches
-- Description of goods inconsistencies
-- Weight or measurement discrepancies
-- Missing or additional clauses`;
-      break;
-      
-    case 'bill-of-entry':
-    case 'bills-of-entry':
-      instruction = `Please analyze these bills of entry and provide a detailed comparison. 
-      
-Extract key information such as:
-- Entry numbers and dates
-- Importer and exporter information
-- Customs broker details
+- B/L numbers and dates
+- Shipper details
+- Consignee details
+- Notify party information
+- Vessel/voyage or flight details
 - Port of loading and discharge
-- Country of origin
-- HS codes and product descriptions
-- Duty and tax assessments
-- Total declared value
-- Exchange rates
-- Import license details
-- Customs station
+- Description of goods
+- Package count and type
+- Weight and measurement
+- Freight terms
+- Container numbers
+- Marks and numbers
 
 Organize this information into a comparison table, then provide analysis in the required sections. Pay special attention to:
-- HS code discrepancies
-- Duty calculation errors
-- Value declaration inconsistencies
-- Country of origin mismatches
-- Missing or additional items`;
+- Shipper/consignee discrepancies
+- Package count differences
+- Weight variations
+- Vessel/voyage inconsistencies
+- Description of goods variations`;
       break;
-
-    case 'logistics':
-      instruction = `Please analyze these logistics documents and provide a detailed comparison. These may include Bills of Lading, Invoices, Packing Lists, or other shipping documents.
       
-First identify the document types, then extract all relevant information such as:
-- Parties involved (shipper, consignee, notify party)
-- Reference numbers (BL, invoice, PO numbers)
-- Dates (issue, shipping, delivery)
-- Goods description and quantities
-- Packaging details
-- Weights and measurements
-- Origin and destination
-- Vessel/voyage/container details if applicable
-- Terms and conditions
+    case 'purchase-order':
+    case 'purchase-orders':
+    case 'po':
+      instruction = `Please analyze these Purchase Orders and provide a detailed comparison.
+      
+Extract key information such as:
+- PO numbers and dates
+- Buyer details
+- Supplier details
+- Delivery address
+- Payment terms
+- Delivery terms
+- Line items with descriptions
+- Quantities and unit prices
+- Total values
+- Currency
+- Delivery dates
 
-Organize this information into a comparison table, then provide analysis in the required sections. Pay special attention to any discrepancies between the documents that could cause issues in the logistics process.`;
+Organize this information into a comparison table, then provide analysis in the required sections. Pay special attention to:
+- Price discrepancies
+- Quantity differences
+- Delivery term variations
+- Payment term inconsistencies
+- Missing or additional line items`;
+      break;
+      
+    case 'verification':
+      instruction = `Please verify these documents for accuracy and consistency.
+      
+Extract key information from each document and verify:
+- Document authenticity indicators
+- Consistency of information across documents
+- Completeness of required information
+- Proper signatures and stamps (if visible)
+- Dates are logical and sequential
+- Reference numbers are consistent
+- Quantities, weights, and values match
+- Shipping details are consistent
+
+Organize this information into a comparison table, then provide detailed verification analysis in the required sections.`;
+      break;
+      
+    case 'validation':
+      instruction = `Please validate these documents against standard requirements and each other.
+      
+Extract key information from each document and validate:
+- All required fields are present
+- Information is consistent across all documents
+- Calculations are correct (totals, taxes, etc.)
+- Dates are valid and logical
+- Reference numbers follow expected formats
+- Shipping details match across documents
+- Terms and conditions are consistent
+- No contradictory information exists
+
+Organize this information into a comparison table, then provide detailed validation analysis in the required sections.`;
+      break;
+      
+    // Default case for general comparison
+    default:
+      // Use the default instruction defined at the beginning
       break;
   }
   

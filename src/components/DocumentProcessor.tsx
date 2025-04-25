@@ -2,13 +2,24 @@ import { useState, useEffect } from 'react';
 import { DocumentFile, ComparisonResult, ParsedDocument } from '../lib/types';
 import { FileUpload } from './FileUpload';
 import { parseDocument } from '../lib/parsers';
-import ClaudeService from '../services/claude-service';
+import ClaudeService, { prepareInstructions } from '../services/claude-service';
 import { Button } from '../components/ui/custom-button';
 import { ComparisonView } from './ComparisonView';
 import { LoadingIndicator, LoadingOverlay } from './ui/loading-indicator';
 
 // Initialize the Claude service
 const claudeService = new ClaudeService();
+
+// Available comparison types
+const comparisonTypes = [
+  { value: 'logistics', label: 'Logistics (General)' },
+  { value: 'invoice-po', label: 'Invoice vs Purchase Order' },
+  { value: 'bl-invoice', label: 'Bill of Lading vs Invoice' },
+  { value: 'bl-packinglist', label: 'Bill of Lading vs Packing List' },
+  { value: 'invoice-packinglist', label: 'Invoice vs Packing List' },
+  { value: 'verification', label: 'Document Verification' },
+  { value: 'validation', label: 'Document Validation' }
+];
 
 export function DocumentProcessor() {
   const [files, setFiles] = useState<DocumentFile[]>([]);
@@ -22,6 +33,35 @@ export function DocumentProcessor() {
   const [documentNames, setDocumentNames] = useState<string[]>([]);
   const [tokenUsage, setTokenUsage] = useState<{input: number, output: number, cost: number} | null>(null);
   const [processingStage, setProcessingStage] = useState<string>('');
+  const [comparisonType, setComparisonType] = useState<string>('logistics');
+
+  // Auto-detect appropriate comparison type based on file types
+  useEffect(() => {
+    if (files.length >= 2) {
+      // Get file names for simple detection
+      const fileNames = files.map(file => file.name.toLowerCase());
+      
+      // Check for common document type patterns
+      const hasInvoice = fileNames.some(name => name.includes('invoice'));
+      const hasPO = fileNames.some(name => name.includes('po') || name.includes('purchase') || name.includes('order'));
+      const hasBL = fileNames.some(name => name.includes('bl') || name.includes('bill') || name.includes('lading'));
+      const hasPackingList = fileNames.some(name => name.includes('pack') || name.includes('packing'));
+      
+      // Set appropriate comparison type
+      if (hasInvoice && hasPO) {
+        setComparisonType('invoice-po');
+      } else if (hasBL && hasInvoice) {
+        setComparisonType('bl-invoice');
+      } else if (hasBL && hasPackingList) {
+        setComparisonType('bl-packinglist');
+      } else if (hasInvoice && hasPackingList) {
+        setComparisonType('invoice-packinglist');
+      } else {
+        // Default to general logistics comparison
+        setComparisonType('logistics');
+      }
+    }
+  }, [files]);
 
   useEffect(() => {
     // Reset state when files change
@@ -105,67 +145,6 @@ export function DocumentProcessor() {
     }
   };
 
-  const processDocuments = async () => {
-    if (parsedDocuments.length < 2) {
-      setError('Please upload at least two documents for comparison.');
-      return;
-    }
-    
-    try {
-      setIsProcessing(true);
-      setError(null);
-      setProcessingProgress(25); // Start processing
-      
-      // Get document names for better display in the comparison
-      const docNames = files.map(file => file.name);
-      setDocumentNames(docNames);
-      
-      // Parse any remaining documents
-      const parsed = [...parsedDocuments];
-      
-      // Update progress
-      setProcessingProgress(50); // Parsing complete, now analyzing
-      
-      // Get the comparison type instruction
-      const response = await claudeService.analyzeDocuments(parsed, 'Compare these documents and identify key differences and similarities.');
-      
-      // Extract the result and token usage
-      const { result, tokenUsage } = response;
-      
-      // Update state with the comparison result
-      setComparisonResult(result);
-      setTokenUsage(tokenUsage);
-      setProcessingProgress(100); // Processing complete
-    } catch (error) {
-      console.error('Error processing documents:', error);
-      setError(`Error processing documents: ${error.message}`);
-      setProcessingProgress(0); // Reset progress on error
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const analyzeFiles = async (parsed: ParsedDocument[]) => {
-    try {
-      setProcessingProgress(50); // Parsing complete, now analyzing
-      
-      // Get the comparison type instruction
-      const response = await claudeService.analyzeDocuments(parsed, 'Compare these documents and identify key differences and similarities.');
-      
-      // Extract the result and token usage
-      const { result, tokenUsage } = response;
-      
-      setComparisonResult(result);
-      setTokenUsage(tokenUsage);
-      setProcessingProgress(100);
-      return result;
-    } catch (err) {
-      console.error('Error analyzing files:', err);
-      setError(`Error analyzing files: ${err instanceof Error ? err.message : 'Unknown error'}`);
-      throw err;
-    }
-  };
-
   const handleCompare = async () => {
     if (files.length < 2) {
       setError('Please upload at least two documents for comparison.');
@@ -196,7 +175,8 @@ export function DocumentProcessor() {
       setProcessingStage('Documents processed. Analyzing with Claude AI...');
       
       // Get the comparison type instruction
-      const response = await claudeService.analyzeDocuments(parsed, 'Compare these documents and identify key differences and similarities.');
+      const instruction = prepareInstructions(comparisonType);
+      const response = await claudeService.analyzeDocuments(parsed, instruction);
       
       // Extract the result and token usage
       const { result, tokenUsage } = response;
@@ -258,14 +238,36 @@ export function DocumentProcessor() {
       <div className="file-upload-section">
         <FileUpload onFilesSelected={handleFilesSelected} />
         
-        <div className="mt-4">
-          <Button 
-            onClick={handleCompare}
-            disabled={isProcessing || files.length === 0}
-            className="w-full md:w-auto"
-          >
-            {isProcessing ? 'Processing...' : 'Compare Documents'}
-          </Button>
+        {/* Comparison Type Selection */}
+        <div className="mt-4 flex flex-col md:flex-row gap-4">
+          <div className="flex-1">
+            <label htmlFor="comparison-type" className="block text-sm font-medium text-gray-700 mb-1">
+              Comparison Type:
+            </label>
+            <select
+              id="comparison-type"
+              value={comparisonType}
+              onChange={(e) => setComparisonType(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary focus:border-primary"
+              disabled={isProcessing}
+            >
+              {comparisonTypes.map((type) => (
+                <option key={type.value} value={type.value}>
+                  {type.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          
+          <div className="flex items-end">
+            <Button 
+              onClick={handleCompare}
+              disabled={isProcessing || files.length === 0}
+              className="w-full md:w-auto"
+            >
+              {isProcessing ? 'Processing...' : 'Compare Documents'}
+            </Button>
+          </div>
         </div>
         
         {/* Processing Status */}
