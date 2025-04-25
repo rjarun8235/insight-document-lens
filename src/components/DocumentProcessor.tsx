@@ -3,12 +3,14 @@ import { DocumentFile, ComparisonResult, ParsedDocument } from '../lib/types';
 import { FileUpload } from './FileUpload';
 import { parseDocument } from '../lib/parsers';
 import ClaudeService, { prepareInstructions } from '../services/claude-service';
+import MultiStageClaudeService from '../services/multi-stage-claude-service';
 import { Button } from '../components/ui/custom-button';
 import { ComparisonView } from './ComparisonView';
 import { LoadingIndicator, LoadingOverlay } from './ui/loading-indicator';
 
-// Initialize the Claude service
+// Initialize the Claude services
 const claudeService = new ClaudeService();
+const multiStageClaudeService = new MultiStageClaudeService();
 
 // Available comparison types
 const comparisonTypes = [
@@ -19,6 +21,13 @@ const comparisonTypes = [
   { value: 'invoice-packinglist', label: 'Invoice vs Packing List' },
   { value: 'verification', label: 'Document Verification' },
   { value: 'validation', label: 'Document Validation' }
+];
+
+// Processing modes
+const processingModes = [
+  { value: 'standard', label: 'Standard (Single Stage)' },
+  { value: 'multi-stage', label: 'Multi-Stage Pipeline' },
+  { value: 'advanced', label: 'Advanced with Validation' }
 ];
 
 export function DocumentProcessor() {
@@ -34,6 +43,10 @@ export function DocumentProcessor() {
   const [tokenUsage, setTokenUsage] = useState<{input: number, output: number, cost: number} | null>(null);
   const [processingStage, setProcessingStage] = useState<string>('');
   const [comparisonType, setComparisonType] = useState<string>('logistics');
+  const [processingMode, setProcessingMode] = useState<string>('standard');
+  const [showThinking, setShowThinking] = useState<boolean>(false);
+  const [thinkingProcess, setThinkingProcess] = useState<string | null>(null);
+  const [stageResults, setStageResults] = useState<any | null>(null);
 
   // Auto-detect appropriate comparison type based on file types
   useEffect(() => {
@@ -70,6 +83,8 @@ export function DocumentProcessor() {
     setError(null);
     setFollowUpQuestion('');
     setProcessingProgress(0);
+    setThinkingProcess(null);
+    setStageResults(null);
     
     // Update document names for display in comparison view
     if (files.length > 0) {
@@ -120,7 +135,7 @@ export function DocumentProcessor() {
           ));
           
           // Update progress
-          setProcessingProgress(Math.round(((i + 1) / totalFiles) * 50)); // First 50% is parsing
+          setProcessingProgress(Math.round(((i + 1) / totalFiles) * 25)); // First 25% is parsing
         } catch (err) {
           console.error(`Error parsing file ${file.name}:`, err);
           
@@ -140,8 +155,6 @@ export function DocumentProcessor() {
       console.error('Error parsing files:', err);
       setError(`Error parsing files: ${err instanceof Error ? err.message : 'Unknown error'}`);
       return [];
-    } finally {
-      setIsProcessing(false);
     }
   };
 
@@ -154,6 +167,8 @@ export function DocumentProcessor() {
     setError(null);
     setIsProcessing(true);
     setProcessingStage('Starting document comparison...');
+    setThinkingProcess(null);
+    setStageResults(null);
     
     try {
       // First parse the files
@@ -170,22 +185,66 @@ export function DocumentProcessor() {
       const docNames = files.map(file => file.name);
       setDocumentNames(docNames);
       
-      // Update progress
-      setProcessingProgress(50); // Parsing complete, now analyzing
-      setProcessingStage('Documents processed. Analyzing with Claude AI...');
-      
-      // Get the comparison type instruction
-      const instruction = prepareInstructions(comparisonType);
-      const response = await claudeService.analyzeDocuments(parsed, instruction);
-      
-      // Extract the result and token usage
-      const { result, tokenUsage } = response;
-      
-      // Update state with the comparison result
-      setComparisonResult(result);
-      setTokenUsage(tokenUsage);
-      setProcessingProgress(100); // Processing complete
-      setProcessingStage('Analysis complete!');
+      // Process based on selected mode
+      if (processingMode === 'standard') {
+        // Standard single-stage processing
+        setProcessingStage('Analyzing documents with Claude AI...');
+        setProcessingProgress(30);
+        
+        const instruction = prepareInstructions(comparisonType);
+        const response = await claudeService.analyzeDocuments(parsed, instruction);
+        
+        setComparisonResult(response.result);
+        setTokenUsage(response.tokenUsage);
+        setProcessingProgress(100);
+        setProcessingStage('Analysis complete!');
+      } 
+      else {
+        // Multi-stage or advanced processing
+        const useValidation = processingMode === 'advanced';
+        
+        // Stage 1: Extraction
+        setProcessingStage('Stage 1/3: Extracting data from documents...');
+        setProcessingProgress(30);
+        
+        // Stage 2: Analysis
+        setTimeout(() => {
+          setProcessingStage('Stage 2/3: Analyzing extracted data...');
+          setProcessingProgress(60);
+        }, 2000);
+        
+        // Stage 3: Validation (if advanced mode)
+        if (useValidation) {
+          setTimeout(() => {
+            setProcessingStage('Stage 3/3: Validating analysis with extended thinking...');
+            setProcessingProgress(80);
+          }, 4000);
+        }
+        
+        // Call the multi-stage service
+        const multiStageResult = await multiStageClaudeService.processDocuments(
+          parsed,
+          comparisonType,
+          {
+            skipValidation: !useValidation,
+            showThinking: showThinking && useValidation,
+            useExtendedOutput: useValidation
+          }
+        );
+        
+        // Update state with results
+        setComparisonResult(multiStageResult.result);
+        setTokenUsage(multiStageResult.totalTokenUsage);
+        setStageResults(multiStageResult.stages);
+        
+        // Set thinking process if available
+        if (showThinking && multiStageResult.stages.validation?.thinkingProcess) {
+          setThinkingProcess(multiStageResult.stages.validation.thinkingProcess);
+        }
+        
+        setProcessingProgress(100);
+        setProcessingStage('Analysis complete!');
+      }
     } catch (err) {
       console.error('Comparison process failed:', err);
       setError(`Comparison failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
@@ -238,9 +297,9 @@ export function DocumentProcessor() {
       <div className="file-upload-section">
         <FileUpload onFilesSelected={handleFilesSelected} />
         
-        {/* Comparison Type Selection */}
-        <div className="mt-4 flex flex-col md:flex-row gap-4">
-          <div className="flex-1">
+        {/* Comparison Settings */}
+        <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
             <label htmlFor="comparison-type" className="block text-sm font-medium text-gray-700 mb-1">
               Comparison Type:
             </label>
@@ -259,15 +318,55 @@ export function DocumentProcessor() {
             </select>
           </div>
           
-          <div className="flex items-end">
-            <Button 
-              onClick={handleCompare}
-              disabled={isProcessing || files.length === 0}
-              className="w-full md:w-auto"
+          <div>
+            <label htmlFor="processing-mode" className="block text-sm font-medium text-gray-700 mb-1">
+              Processing Mode:
+            </label>
+            <select
+              id="processing-mode"
+              value={processingMode}
+              onChange={(e) => setProcessingMode(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary focus:border-primary"
+              disabled={isProcessing}
             >
-              {isProcessing ? 'Processing...' : 'Compare Documents'}
-            </Button>
+              {processingModes.map((mode) => (
+                <option key={mode.value} value={mode.value}>
+                  {mode.label}
+                </option>
+              ))}
+            </select>
           </div>
+        </div>
+        
+        {/* Advanced Options */}
+        {processingMode === 'advanced' && (
+          <div className="mt-4 p-3 border border-gray-200 rounded-md bg-gray-50">
+            <h3 className="text-sm font-medium text-gray-700 mb-2">Advanced Options:</h3>
+            <div className="flex items-center">
+              <input
+                type="checkbox"
+                id="show-thinking"
+                checked={showThinking}
+                onChange={(e) => setShowThinking(e.target.checked)}
+                className="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded"
+                disabled={isProcessing}
+              />
+              <label htmlFor="show-thinking" className="ml-2 block text-sm text-gray-700">
+                Show Claude's thinking process (uses extended thinking)
+              </label>
+            </div>
+          </div>
+        )}
+        
+        {/* Compare Button */}
+        <div className="mt-4">
+          <Button 
+            onClick={handleCompare}
+            disabled={isProcessing || files.length === 0}
+            className="w-full md:w-auto"
+          >
+            {isProcessing ? 'Processing...' : 'Compare Documents'}
+          </Button>
         </div>
         
         {/* Processing Status */}
@@ -300,6 +399,74 @@ export function DocumentProcessor() {
           <div className="results-section">
             <ComparisonView result={comparisonResult} documentNames={documentNames} />
             
+            {/* Thinking Process Display */}
+            {thinkingProcess && (
+              <div className="mt-6 p-4 border border-blue-200 rounded-md bg-blue-50">
+                <h3 className="text-lg font-medium mb-2 flex items-center">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2 text-blue-500" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11a1 1 0 10-2 0v2H7a1 1 0 100 2h2v2a1 1 0 102 0v-2h2a1 1 0 100-2h-2V7z" clipRule="evenodd" />
+                  </svg>
+                  Claude's Thinking Process
+                </h3>
+                <div className="bg-white p-3 rounded border border-gray-200 max-h-96 overflow-y-auto">
+                  <pre className="text-sm whitespace-pre-wrap">{thinkingProcess}</pre>
+                </div>
+              </div>
+            )}
+            
+            {/* Stage Results Display */}
+            {stageResults && (
+              <div className="mt-6">
+                <h3 className="text-lg font-medium mb-2">Multi-Stage Processing Results</h3>
+                
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {/* Stage 1: Extraction */}
+                  <div className="p-3 border rounded-md">
+                    <h4 className="font-medium text-sm mb-1 flex items-center">
+                      <span className="bg-blue-100 text-blue-800 text-xs font-medium mr-2 px-2 py-0.5 rounded">Stage 1</span>
+                      Extraction
+                    </h4>
+                    <div className="text-sm">
+                      <p><span className="font-medium">Input Tokens:</span> {stageResults.extraction.tokenUsage.input.toLocaleString()}</p>
+                      <p><span className="font-medium">Output Tokens:</span> {stageResults.extraction.tokenUsage.output.toLocaleString()}</p>
+                      <p><span className="font-medium">Cost:</span> ${stageResults.extraction.tokenUsage.cost.toFixed(6)}</p>
+                      <p><span className="font-medium">Fields Extracted:</span> {Object.keys(stageResults.extraction.extractedFields || {}).length}</p>
+                    </div>
+                  </div>
+                  
+                  {/* Stage 2: Analysis */}
+                  <div className="p-3 border rounded-md">
+                    <h4 className="font-medium text-sm mb-1 flex items-center">
+                      <span className="bg-green-100 text-green-800 text-xs font-medium mr-2 px-2 py-0.5 rounded">Stage 2</span>
+                      Analysis
+                    </h4>
+                    <div className="text-sm">
+                      <p><span className="font-medium">Input Tokens:</span> {stageResults.analysis.tokenUsage.input.toLocaleString()}</p>
+                      <p><span className="font-medium">Output Tokens:</span> {stageResults.analysis.tokenUsage.output.toLocaleString()}</p>
+                      <p><span className="font-medium">Cost:</span> ${stageResults.analysis.tokenUsage.cost.toFixed(6)}</p>
+                      <p><span className="font-medium">Tables Generated:</span> {stageResults.analysis.comparisonResult.tables?.length || 0}</p>
+                    </div>
+                  </div>
+                  
+                  {/* Stage 3: Validation (if available) */}
+                  {stageResults.validation && (
+                    <div className="p-3 border rounded-md">
+                      <h4 className="font-medium text-sm mb-1 flex items-center">
+                        <span className="bg-purple-100 text-purple-800 text-xs font-medium mr-2 px-2 py-0.5 rounded">Stage 3</span>
+                        Validation
+                      </h4>
+                      <div className="text-sm">
+                        <p><span className="font-medium">Input Tokens:</span> {stageResults.validation.tokenUsage.input.toLocaleString()}</p>
+                        <p><span className="font-medium">Output Tokens:</span> {stageResults.validation.tokenUsage.output.toLocaleString()}</p>
+                        <p><span className="font-medium">Cost:</span> ${stageResults.validation.tokenUsage.cost.toFixed(6)}</p>
+                        <p><span className="font-medium">Confidence:</span> {(stageResults.validation.confidence * 100).toFixed(1)}%</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+            
             {/* Token Usage Information */}
             {tokenUsage && (
               <div className="mt-4 p-3 bg-gray-50 border rounded-md text-sm">
@@ -319,7 +486,7 @@ export function DocumentProcessor() {
                   </div>
                 </div>
                 <p className="text-xs text-gray-500 mt-2">
-                  Cost estimate based on Claude 3.7 Sonnet pricing ($3 per million tokens).
+                  Cost estimate based on Claude API pricing.
                 </p>
               </div>
             )}

@@ -372,217 +372,85 @@ Organize this information into a comparison table, then provide detailed validat
 }
 
 // Helper function to prepare system instructions for Claude API
-function prepareSystemInstructions(): string {
-  // Create system message with instructions
-  const systemMessage = `You are DocLensAI, an expert document analyzer for TSV Global Solutions. Your role is to analyze and compare documents with precision and accuracy.
+export function prepareSystemInstructions(): string {
+  const enhancedSystemMessage = `You are a document analysis assistant specializing in logistics and shipping documents. Your task is to analyze and compare the provided documents, extracting key information and identifying discrepancies.
 
-IMPORTANT GUIDELINES:
-- Only make claims that are directly supported by the documents. If you're unsure about any information or can't find it in the documents, explicitly state "I don't have enough information to determine this" rather than making assumptions.
-- For each section of your analysis, first extract relevant quotes from the documents, then base your analysis only on those quotes.
-- Maintain a professional, factual tone throughout your analysis.
-- When comparing documents, highlight specific differences with direct citations from the documents.
-- If the documents are unclear or ambiguous, acknowledge this uncertainty rather than guessing.
-- Format your response consistently using the structure below.
-- IMPORTANT: You must handle ANY NUMBER of documents, not just two. If more than two documents are provided, create comparison tables that include ALL documents.
+CRITICAL INSTRUCTION: ONLY extract information that is ACTUALLY PRESENT in the documents. NEVER generate placeholder data, fictional company names, or make assumptions about missing information. If information is not present, explicitly state "No data available" or "Not mentioned in document".
 
-STEP-BY-STEP THINKING PROCESS:
-1. First, carefully read each document and identify the document type (invoice, packing list, bill of entry, etc.)
-2. Extract key fields from each document (dates, amounts, item descriptions, quantities, etc.)
-3. Determine which fields are common across all documents and which are unique to specific documents
-4. Create a structured comparison table with all relevant fields
-5. Perform item-level verification:
-   a. Extract all line items from each document
-   b. Match corresponding items across documents
-   c. Compare quantities, descriptions, prices, and other details
-   d. Highlight any discrepancies between documents
-6. For each analysis section:
-   a. Extract direct quotes from the documents relevant to that section
-   b. Compare the information across documents, noting similarities and differences
-   c. Analyze the implications of these similarities/differences
-   d. Draw conclusions based ONLY on the evidence in the documents
+Follow these guidelines for your analysis:
 
-REQUIRED OUTPUT FORMAT FOR MULTIPLE DOCUMENTS:
-<comparison_tables>
-| Field | Document 1 | Document 2 | Document 3 | ... | Document N |
-| ----- | ---------- | ---------- | ---------- | --- | ---------- |
-| Field Name | Value from Doc 1 | Value from Doc 2 | Value from Doc 3 | ... | Value from Doc N |
-...additional rows as needed
-</comparison_tables>
+1. Document Identification:
+   - Identify the type of each document (Invoice, Bill of Lading, Packing List, Purchase Order, etc.)
+   - Extract document numbers, dates, and reference numbers
+   - Note any missing or incomplete identification information
 
-<item_level_comparison>
-| Item Description | Document 1 Quantity | Document 2 Quantity | ... | Document N Quantity | Quantity Match? |
-| --------------- | ------------------ | ------------------ | --- | ------------------ | -------------- |
-| Item 1 | Qty in Doc 1 | Qty in Doc 2 | ... | Qty in Doc N | ✓ or ✗ |
-...additional rows as needed
-</item_level_comparison>
+2. Information Extraction:
+   - Extract ONLY the information that is explicitly stated in the documents
+   - Use the EXACT names, values, and terms as they appear in the documents
+   - For missing information, use "No data available" rather than making up placeholder data
+   - Never invent company names like "ABC Manufacturer" or "XYZ Retail" if they don't appear in the documents
 
-<section_name>Verification</section_name>
-<quotes>
-Direct quotes from documents related to verification.
-</quotes>
-<analysis>
-Your analysis of verification aspects, based only on the quotes above.
-</analysis>
+3. Comparison Table:
+   - Create a structured comparison table with fields as rows and documents as columns
+   - Use the EXACT text from the documents for all field values
+   - For fields not present in a document, use "No data available"
+   - Ensure consistent field names across all documents
 
-<section_name>Validation</section_name>
-<quotes>
-Direct quotes from documents related to validation.
-</quotes>
-<analysis>
-Your analysis of validation aspects, based only on the quotes above.
-</analysis>
+4. Verification Section:
+   - First extract direct quotes from the documents that are relevant to verification
+   - Then provide analysis of document authenticity and consistency
+   - Focus on whether key information matches across documents
+   - Highlight any suspicious inconsistencies or missing critical information
 
-<section_name>Review</section_name>
-<quotes>
-Direct quotes from documents related to review.
-</quotes>
-<analysis>
-Your analysis of review aspects, based only on the quotes above.
-</analysis>
+5. Validation Section:
+   - First extract direct quotes from the documents that are relevant to validation
+   - Then analyze whether the documents contain all required information
+   - Check for logical consistency of dates, amounts, and references
+   - Identify any validation issues such as expired dates or invalid references
 
-<section_name>Analysis</section_name>
-<quotes>
-Direct quotes from documents related to general analysis.
-</quotes>
-<analysis>
-Your overall analysis, based only on the quotes above.
-</analysis>
+6. Review Section:
+   - First extract direct quotes from the documents that are relevant to review
+   - Then provide a detailed review of the documents' content
+   - Analyze completeness and accuracy of information
+   - Note any unusual terms or conditions
 
-<section_name>Summary</section_name>
-<quotes>
-Direct quotes that summarize the documents.
-</quotes>
-<analysis>
-Your summary of the documents, based only on the quotes above.
-</analysis>
+7. Analysis Section:
+   - First extract direct quotes from the documents that are relevant to analysis
+   - Then provide deeper analysis of the documents' implications
+   - Identify potential business impacts of any discrepancies
+   - Note any legal or compliance concerns
 
-<section_name>Insights</section_name>
-<quotes>
-Direct quotes that lead to insights.
-</quotes>
-<analysis>
-Your insights based only on the quotes above.
-</analysis>
+8. Summary Section:
+   - First extract direct quotes from the documents that are relevant to summary
+   - Then summarize key findings from the comparison
+   - Highlight the most significant discrepancies or issues
+   - Provide an overall assessment of document consistency
 
-<section_name>Recommendations</section_name>
-<quotes>
-Direct quotes that inform recommendations.
-</quotes>
-<analysis>
-Your recommendations based only on the quotes above.
-</analysis>
+9. Insights Section:
+   - First extract direct quotes from the documents that are relevant to insights
+   - Then offer insights based on the document analysis
+   - Suggest potential reasons for discrepancies
+   - Identify business implications of the findings
 
-<section_name>Risks</section_name>
-<quotes>
-Direct quotes that indicate risks.
-</quotes>
-<analysis>
-Your risk assessment based only on the quotes above.
-</analysis>
+10. Recommendations Section:
+    - First extract direct quotes from the documents that are relevant to recommendations
+    - Then recommend actions to address issues found
+    - Suggest specific steps to resolve discrepancies
+    - Prioritize recommendations by importance
 
-<section_name>Issues</section_name>
-<quotes>
-Direct quotes that highlight issues.
-</quotes>
-<analysis>
-Your analysis of issues based only on the quotes above.
-</analysis>`;
+11. Risks Section:
+    - First extract direct quotes from the documents that are relevant to risks
+    - Then identify potential financial, operational, or compliance risks
+    - Assess severity of each risk
+    - Note time-sensitive issues requiring immediate attention
 
-  // Add specific instructions for handling empty or missing values
-  const enhancedSystemMessage = `${systemMessage}
+12. Issues Section:
+    - First extract direct quotes from the documents that are relevant to issues
+    - Then list specific problems requiring resolution
+    - Categorize issues by type (data, compliance, process)
+    - Note which document(s) each issue relates to
 
-IMPORTANT ADDITIONAL INSTRUCTIONS:
-- For any document where you cannot extract specific fields, clearly indicate this with "No data available" or similar text.
-- If a field exists in one document but not in others, still include that field in your comparison table with empty values for documents where it's not present.
-- Always provide values for ALL documents in the comparison, even if some documents have minimal or no extractable data.
-- If a document appears to be completely different from others (different document type), note this in your analysis.
-- When analyzing logistics documents, pay special attention to:
-  * Quantities and units of measurement
-  * Prices and total amounts
-  * Dates (shipping, delivery, issuance)
-  * Product descriptions and specifications
-  * Party information (shipper, consignee, etc.)
-  * Document numbers and references
-
-THINKING PROCESS FOR LOGISTICS DOCUMENTS:
-1. Identify the document type (invoice, packing list, bill of entry, etc.)
-2. Extract all key fields relevant to that document type
-3. Check for consistency across related documents:
-   - Do quantities match between invoice and packing list? (Quantity Reconciliation)
-   - Do descriptions match between all documents?
-   - Are dates consistent and logical?
-   - Do monetary values add up correctly?
-4. Identify any discrepancies or missing information
-5. Assess compliance with standard document requirements
-6. Evaluate potential risks or issues based on the discrepancies
-
-DISCREPANCY HIGHLIGHTING:
-- In your item-level comparison table, use ✓ for matching values and ✗ for discrepancies
-- For text descriptions of discrepancies, use phrases like "DISCREPANCY FOUND:" to clearly highlight issues
-- When describing monetary or quantity discrepancies, show both values and calculate the difference
-
-DOCUMENT PROCESSING TECHNIQUES:
-1. For structured documents (invoices, forms):
-   - Look for key-value pairs (e.g., "Invoice Number: INV-12345")
-   - Extract tabular data, preserving row and column relationships
-   - Pay attention to section headers that organize information
-
-2. For unstructured documents (letters, reports):
-   - Identify main topics and subtopics
-   - Extract dates, names, and numerical values
-   - Look for action items or requirements
-
-3. For all documents:
-   - Note document dates, reference numbers, and parties involved
-   - Identify monetary values and their context (e.g., subtotal, tax, total)
-   - Extract quantities and units of measurement
-   - Pay attention to terms and conditions that may impact analysis
-
-DETAILED ANALYSIS REQUIREMENTS:
-1. Verification Section:
-   - Confirm document authenticity indicators
-   - Verify consistency of reference numbers across documents
-   - Check for appropriate signatures and stamps where applicable
-
-2. Validation Section:
-   - Validate mathematical calculations (totals, subtotals)
-   - Confirm pricing calculations match contracted rates if available
-   - Verify quantities match across related documents
-
-3. Review Section:
-   - Review compliance with standard document requirements
-   - Check for missing information or fields
-   - Assess document completeness
-
-4. Analysis Section:
-   - Provide comprehensive overview of document relationships
-   - Analyze the significance of any discrepancies
-   - Evaluate the overall coherence of the document set
-
-5. Summary Section:
-   - Concisely summarize key findings
-   - Highlight major discrepancies or issues
-   - Provide overall assessment of document set
-
-6. Insights Section:
-   - Identify patterns or trends in the data
-   - Note unusual or unexpected information
-   - Suggest possible explanations for discrepancies
-
-7. Recommendations Section:
-   - Suggest specific actions to resolve discrepancies
-   - Recommend process improvements
-   - Prioritize recommendations by importance
-
-8. Risks Section:
-   - Identify potential financial, operational, or compliance risks
-   - Assess severity of each risk
-   - Note time-sensitive issues requiring immediate attention
-
-9. Issues Section:
-   - List specific problems requiring resolution
-   - Categorize issues by type (data, compliance, process)
-   - Note which document(s) each issue relates to`;
+FINAL REMINDER: Your analysis must be STRICTLY based on the actual content of the documents. Never generate fictional data or make assumptions about missing information. If data is not present, clearly state "No data available" or "Not mentioned in document".`;
 
   return enhancedSystemMessage;
 }
@@ -627,6 +495,9 @@ export default class ClaudeService {
       });
       documentTexts += '</documents>\n\n';
       
+      // Enhanced user instruction with emphasis on extracting actual data
+      const enhancedInstruction = `${instruction}\n\nIMPORTANT: Extract ONLY information that is ACTUALLY PRESENT in the documents. Do not generate placeholder data or fictional company names. If information is not present in a document, explicitly state "No data available" or "Not mentioned in document".`;
+      
       // Create the messages for the API call - put long content at the top for better processing
       const messages = [
         {
@@ -634,7 +505,7 @@ export default class ClaudeService {
           content: [
             {
               type: 'text',
-              text: `${documentTexts}${systemInstructions}\n\nUser instruction: ${instruction}\n\nBefore analyzing, extract and quote the most relevant parts of each document that will help with the analysis.`
+              text: `${documentTexts}${systemInstructions}\n\nUser instruction: ${enhancedInstruction}\n\nBefore analyzing, extract and quote the most relevant parts of each document that will help with the analysis.`
             }
           ]
         }
@@ -647,17 +518,18 @@ export default class ClaudeService {
       console.log(`  - Estimated tokens: ~${Math.ceil(promptText.length / 4)}`);
       console.log(`  - System instructions: ${systemInstructions.length} characters (${Math.ceil(systemInstructions.length / 4)} tokens)`);
       console.log(`  - Document content: ${documentTexts.length} characters (${Math.ceil(documentTexts.length / 4)} tokens)`);
-      console.log(`  - User instruction: ${instruction.length} characters (${Math.ceil(instruction.length / 4)} tokens)`);
+      console.log(`  - User instruction: ${enhancedInstruction.length} characters (${Math.ceil(enhancedInstruction.length / 4)} tokens)`);
       
       // Log API call details
-      console.log('🔄 Calling Claude API with model:', 'claude-3-haiku-20240307');
-      console.log('  - Max tokens requested:', 4000);
+      console.log('🔄 Calling Claude API with model:', 'claude-3-sonnet-20240229');
+      console.log('  - Max tokens requested:', 8000);
       
       // Call the Claude API
       const apiCallStartTime = performance.now();
       const response = await this.callClaudeApi({
-        model: 'claude-3-haiku-20240307',
-        max_tokens: 4000,
+        model: 'claude-3-sonnet-20240229',
+        max_tokens: 8000,
+        temperature: 0.2,
         messages: messages
       });
       const apiCallEndTime = performance.now();
@@ -919,16 +791,31 @@ export default class ClaudeService {
       };
       
       // Extract tables from the response
+      // First try the XML-tagged format
       const tableRegex = /<comparison_tables>([\s\S]*?)<\/comparison_tables>/g;
       const itemComparisonRegex = /<item_level_comparison>([\s\S]*?)<\/item_level_comparison>/g;
       
-      // Process comparison tables
+      // Process comparison tables from XML tags
       let tableMatch;
       while ((tableMatch = tableRegex.exec(contentText)) !== null) {
         const tableContent = tableMatch[1].trim();
         const table = this.parseMarkdownTable(tableContent);
         if (table) {
           result.tables.push(table);
+        }
+      }
+      
+      // If no tables found in XML tags, look for markdown tables directly
+      if (result.tables.length === 0) {
+        // Look for markdown tables (starting with | and having header separator row)
+        const markdownTableRegex = /\|[^\n]+\|\n\|[\s-:]+\|\n(\|[^\n]+\|\n)+/g;
+        let mdTableMatch;
+        while ((mdTableMatch = markdownTableRegex.exec(contentText)) !== null) {
+          const tableContent = mdTableMatch[0].trim();
+          const table = this.parseMarkdownTable(tableContent);
+          if (table) {
+            result.tables.push(table);
+          }
         }
       }
       
@@ -942,7 +829,8 @@ export default class ClaudeService {
         }
       }
       
-      // Extract sections
+      // Extract sections using both formats
+      // First try the XML-tagged format
       const sectionRegex = /<section_name>(.*?)<\/section_name>\s*<quotes>([\s\S]*?)<\/quotes>\s*<analysis>([\s\S]*?)<\/analysis>/g;
       
       let sectionMatch;
@@ -953,6 +841,64 @@ export default class ClaudeService {
         
         // Format the section with quotes and analysis
         result[sectionName] = `<quotes>${quotes}</quotes>\n\n<analysis>${analysis}</analysis>`;
+      }
+      
+      // Also try the markdown header format (### Section Name)
+      const markdownSectionRegex = /###\s+(.*?)\s*\n+(?:<quotes>([\s\S]*?)<\/quotes>\s*\n+)?(?:<analysis>([\s\S]*?)<\/analysis>|([^#<][\s\S]*?)(?=\n+###|\n*$))/g;
+      
+      let mdSectionMatch;
+      while ((mdSectionMatch = markdownSectionRegex.exec(contentText)) !== null) {
+        const sectionName = mdSectionMatch[1].toLowerCase().trim();
+        // If quotes/analysis tags are used
+        let quotes = mdSectionMatch[2]?.trim() || '';
+        let analysis = mdSectionMatch[3]?.trim() || mdSectionMatch[4]?.trim() || '';
+        
+        // Skip if we already have this section from XML tags
+        if (result[sectionName]) continue;
+        
+        // If no quotes tag but we can identify quotes by quotation marks
+        if (!quotes && analysis) {
+          const extractedQuotes = [];
+          // Extract text in quotation marks
+          const quoteRegex = /"([^"]+)"/g;
+          let quoteMatch;
+          while ((quoteMatch = quoteRegex.exec(analysis)) !== null) {
+            extractedQuotes.push(quoteMatch[1]);
+          }
+          
+          if (extractedQuotes.length > 0) {
+            quotes = extractedQuotes.join('\n');
+            // Remove the quotes from the analysis text
+            analysis = analysis.replace(/"([^"]+)"/g, '').replace(/\n\s*\n+/g, '\n\n').trim();
+          }
+        }
+        
+        // Format the section with quotes and analysis
+        result[sectionName] = `<quotes>${quotes}</quotes>\n\n<analysis>${analysis}</analysis>`;
+      }
+      
+      // Check if we have any sections, if not try to extract from plain text
+      const sectionNames = ['verification', 'validation', 'review', 'analysis', 'summary', 
+                           'insights', 'recommendations', 'risks', 'issues'];
+      
+      let hasSections = false;
+      for (const name of sectionNames) {
+        if (result[name]) {
+          hasSections = true;
+          break;
+        }
+      }
+      
+      if (!hasSections) {
+        // Try to find sections by looking for headers
+        for (const name of sectionNames) {
+          const headerRegex = new RegExp(`(?:^|\\n+)(?:##?#?\\s*${name}|${name.charAt(0).toUpperCase() + name.slice(1)})\\s*(?:\\n+|:)([\\s\\S]*?)(?=\\n+(?:##?#?|[A-Z][a-z]+:)|$)`, 'i');
+          const match = headerRegex.exec(contentText);
+          if (match) {
+            const content = match[1].trim();
+            result[name.toLowerCase()] = `<quotes></quotes>\n\n<analysis>${content}</analysis>`;
+          }
+        }
       }
       
       return result;
