@@ -227,33 +227,68 @@ IMPORTANT:
     try {
       const contentText = extractionResponse.content?.[0]?.text || '';
       
-      // Extract JSON from the response
+      // Extract JSON from the response - using more flexible patterns to match various formats
       const jsonMatch = contentText.match(/```json\n([\s\S]*?)\n```/) || 
                         contentText.match(/```\n([\s\S]*?)\n```/) ||
-                        contentText.match(/{[\s\S]*}/);
+                        contentText.match(/```javascript\n([\s\S]*?)\n```/) ||
+                        contentText.match(/```js\n([\s\S]*?)\n```/) ||
+                        contentText.match(/{[\s\S]*"documentData"[\s\S]*"documentTypes"[\s\S]*"extractedFields"[\s\S]*}/);
       
       if (!jsonMatch) {
+        console.error('Failed to extract JSON. Raw response:', contentText);
         throw new Error('Failed to extract JSON from Claude response');
       }
       
-      const jsonText = jsonMatch[1] || jsonMatch[0];
-      const extractedData = JSON.parse(jsonText);
+      let jsonText = jsonMatch[1] || jsonMatch[0];
       
-      // Calculate token usage cost
-      const tokenUsage = {
-        input: extractionResponse.usage?.input_tokens || 0,
-        output: extractionResponse.usage?.output_tokens || 0,
-        cost: (
-          ((extractionResponse.usage?.input_tokens || 0) / 1000000) * MODELS.EXTRACTION.costPerInputMToken +
-          ((extractionResponse.usage?.output_tokens || 0) / 1000000) * MODELS.EXTRACTION.costPerOutputMToken
-        )
-      };
+      // Clean up the JSON text - remove any markdown artifacts or extra text
+      jsonText = jsonText.trim();
       
-      return {
-        ...extractedData,
-        rawText: contentText,
-        tokenUsage
-      };
+      // If the JSON doesn't start with {, try to find the first { and extract from there
+      if (!jsonText.startsWith('{')) {
+        const startIndex = jsonText.indexOf('{');
+        if (startIndex >= 0) {
+          jsonText = jsonText.substring(startIndex);
+        }
+      }
+      
+      // If the JSON doesn't end with }, try to find the last } and extract up to there
+      if (!jsonText.endsWith('}')) {
+        const endIndex = jsonText.lastIndexOf('}');
+        if (endIndex >= 0) {
+          jsonText = jsonText.substring(0, endIndex + 1);
+        }
+      }
+      
+      try {
+        const extractedData = JSON.parse(jsonText);
+        
+        // Validate the extracted data has the required structure
+        if (!extractedData.documentData || !Array.isArray(extractedData.documentData) || 
+            !extractedData.documentTypes || !Array.isArray(extractedData.documentTypes) ||
+            !extractedData.extractedFields || typeof extractedData.extractedFields !== 'object') {
+          throw new Error('Extracted JSON does not have the required structure');
+        }
+        
+        // Calculate token usage cost
+        const tokenUsage = {
+          input: extractionResponse.usage?.input_tokens || 0,
+          output: extractionResponse.usage?.output_tokens || 0,
+          cost: (
+            ((extractionResponse.usage?.input_tokens || 0) / 1000000) * MODELS.EXTRACTION.costPerInputMToken +
+            ((extractionResponse.usage?.output_tokens || 0) / 1000000) * MODELS.EXTRACTION.costPerOutputMToken
+          )
+        };
+        
+        return {
+          ...extractedData,
+          rawText: contentText,
+          tokenUsage
+        };
+      } catch (parseError) {
+        console.error('JSON parse error:', parseError, 'for text:', jsonText);
+        throw new Error(`Failed to parse JSON: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`);
+      }
     } catch (error) {
       console.error('Error parsing extraction result:', error);
       throw new Error(`Failed to parse extraction result: ${error instanceof Error ? error.message : 'Unknown error'}`);
