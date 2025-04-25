@@ -22,6 +22,7 @@ export function DocumentProcessor() {
   const [processingProgress, setProcessingProgress] = useState<number>(0);
   const [documentNames, setDocumentNames] = useState<string[]>([]);
   const [tokenUsage, setTokenUsage] = useState<{input: number, output: number, cost: number} | null>(null);
+  const [processingStage, setProcessingStage] = useState<string>('');
 
   useEffect(() => {
     // Reset state when files change
@@ -45,6 +46,7 @@ export function DocumentProcessor() {
     setError(null);
     setIsProcessing(true);
     setProcessingProgress(0);
+    setProcessingStage('Preparing documents for processing...');
     
     try {
       const totalFiles = files.length;
@@ -57,6 +59,9 @@ export function DocumentProcessor() {
           setFiles(prev => prev.map(f => 
             f.id === file.id ? { ...f, parsed: false, parseProgress: 0, parseError: undefined } : f
           ));
+          
+          // Update processing stage
+          setProcessingStage(`Processing document ${i + 1} of ${totalFiles}: ${file.name}`);
           
           // Parse the document
           const parsedContent: ParsedDocument = await parseDocument(file);
@@ -188,6 +193,7 @@ export function DocumentProcessor() {
     
     setError(null);
     setIsProcessing(true);
+    setProcessingStage('Starting document comparison...');
     
     try {
       // First parse the files
@@ -206,6 +212,7 @@ export function DocumentProcessor() {
       
       // Update progress
       setProcessingProgress(50); // Parsing complete, now analyzing
+      setProcessingStage('Documents processed. Analyzing with Claude AI...');
       
       // Get the comparison type instruction
       const response = await claudeService.analyzeDocuments(parsed, getComparisonInstruction());
@@ -217,12 +224,16 @@ export function DocumentProcessor() {
       setComparisonResult(result);
       setTokenUsage(tokenUsage);
       setProcessingProgress(100); // Processing complete
+      setProcessingStage('Analysis complete!');
     } catch (err) {
       console.error('Comparison process failed:', err);
       setError(`Comparison failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
       setProcessingProgress(0);
     } finally {
-      setIsProcessing(false);
+      setTimeout(() => {
+        setIsProcessing(false);
+        setProcessingStage('');
+      }, 1000); // Show the "Analysis complete" message for 1 second before hiding
     }
   };
 
@@ -233,6 +244,7 @@ export function DocumentProcessor() {
     
     setIsAskingFollowUp(true);
     setError(null);
+    setProcessingStage('Processing your follow-up question...');
     
     try {
       // Create a new instruction with the follow-up question
@@ -247,11 +259,15 @@ export function DocumentProcessor() {
       setComparisonResult(result);
       setTokenUsage(tokenUsage);
       setFollowUpQuestion('');
+      setProcessingStage('Follow-up question answered!');
     } catch (err) {
       console.error('Error asking follow-up:', err);
       setError(`Error asking follow-up: ${err instanceof Error ? err.message : 'Unknown error'}`);
     } finally {
-      setIsAskingFollowUp(false);
+      setTimeout(() => {
+        setIsAskingFollowUp(false);
+        setProcessingStage('');
+      }, 1000);
     }
   };
 
@@ -261,43 +277,22 @@ export function DocumentProcessor() {
       <div className="file-upload-section">
         <FileUpload onFilesSelected={handleFilesSelected} />
         
-        <div className="mt-4 space-y-2">
-          <h3 className="text-lg font-medium">Comparison Type</h3>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-            <Button
-              onClick={() => setComparisonType('verification')}
-              className={`${comparisonType === 'verification' ? 'bg-primary text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-800'}`}
+        <div className="mt-4">
+          <div className="flex items-center space-x-2 mb-3">
+            <h3 className="text-lg font-medium">Comparison Type:</h3>
+            <select 
+              value={comparisonType}
+              onChange={(e) => setComparisonType(e.target.value)}
+              className="px-3 py-1 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
             >
-              Verification
-            </Button>
-            <Button
-              onClick={() => setComparisonType('validation')}
-              className={`${comparisonType === 'validation' ? 'bg-primary text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-800'}`}
-            >
-              Validation
-            </Button>
-            <Button
-              onClick={() => setComparisonType('logistics')}
-              className={`${comparisonType === 'logistics' ? 'bg-primary text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-800'}`}
-            >
-              Logistics
-            </Button>
-            <Button
-              onClick={() => setComparisonType('contracts')}
-              className={`${comparisonType === 'contracts' ? 'bg-primary text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-800'}`}
-            >
-              Contracts
-            </Button>
-            <Button
-              onClick={() => setComparisonType('financial')}
-              className={`${comparisonType === 'financial' ? 'bg-primary text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-800'}`}
-            >
-              Financial
-            </Button>
+              <option value="verification">Verification</option>
+              <option value="validation">Validation</option>
+              <option value="logistics">Logistics</option>
+              <option value="contracts">Contracts</option>
+              <option value="financial">Financial</option>
+            </select>
           </div>
-        </div>
-        
-        <div className="mt-6">
+          
           <Button 
             onClick={handleCompare}
             disabled={isProcessing || files.length === 0}
@@ -306,76 +301,84 @@ export function DocumentProcessor() {
             {isProcessing ? 'Processing...' : 'Compare Documents'}
           </Button>
         </div>
-      </div>
-      
-      {/* Processing Status */}
-      {isProcessing && (
-        <LoadingOverlay 
-          text={`Processing documents...`} 
-          showProgress={true}
-          progress={processingProgress} 
-        />
-      )}
-      
-      {/* Error Display */}
-      {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-md">
-          <p className="font-medium">Error</p>
-          <p>{error}</p>
-        </div>
-      )}
-      
-      {/* Results Display */}
-      {comparisonResult && (
-        <div className="results-section">
-          <ComparisonView result={comparisonResult} documentNames={documentNames} />
-          
-          {/* Token Usage Information */}
-          {tokenUsage && (
-            <div className="mt-4 p-3 bg-gray-50 border rounded-md text-sm">
-              <h4 className="font-medium mb-1">API Usage Information</h4>
-              <div className="grid grid-cols-3 gap-2">
-                <div>
-                  <p className="text-gray-600">Input Tokens</p>
-                  <p className="font-medium">{tokenUsage.input.toLocaleString()}</p>
+        
+        {/* Processing Status */}
+        {isProcessing && (
+          <LoadingOverlay 
+            text={processingStage || 'Processing documents...'} 
+            showProgress={true}
+            progress={processingProgress} 
+          />
+        )}
+        
+        {/* Follow-up Question Loading */}
+        {isAskingFollowUp && (
+          <LoadingOverlay 
+            text={processingStage || 'Processing your follow-up question...'} 
+            showProgress={false}
+          />
+        )}
+        
+        {/* Error Display */}
+        {error && (
+          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-md">
+            <p className="font-medium">Error</p>
+            <p>{error}</p>
+          </div>
+        )}
+        
+        {/* Results Display */}
+        {comparisonResult && (
+          <div className="results-section">
+            <ComparisonView result={comparisonResult} documentNames={documentNames} />
+            
+            {/* Token Usage Information */}
+            {tokenUsage && (
+              <div className="mt-4 p-3 bg-gray-50 border rounded-md text-sm">
+                <h4 className="font-medium mb-1">API Usage Information</h4>
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <p className="text-gray-600">Input Tokens</p>
+                    <p className="font-medium">{tokenUsage.input.toLocaleString()}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-600">Output Tokens</p>
+                    <p className="font-medium">{tokenUsage.output.toLocaleString()}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-600">Estimated Cost</p>
+                    <p className="font-medium">${tokenUsage.cost.toFixed(6)}</p>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-gray-600">Output Tokens</p>
-                  <p className="font-medium">{tokenUsage.output.toLocaleString()}</p>
-                </div>
-                <div>
-                  <p className="text-gray-600">Estimated Cost</p>
-                  <p className="font-medium">${tokenUsage.cost.toFixed(6)}</p>
-                </div>
+                <p className="text-xs text-gray-500 mt-2">
+                  Cost estimate based on Claude 3.7 Sonnet pricing ($3 per million tokens).
+                </p>
               </div>
-              <p className="text-xs text-gray-500 mt-2">
-                Cost estimate based on Claude 3.7 Sonnet pricing ($3 per million tokens).
-              </p>
-            </div>
-          )}
-          
-          {/* Follow-up Question Section */}
-          <div className="mt-8 border-t pt-6">
-            <h3 className="text-lg font-medium mb-2">Ask a Follow-up Question</h3>
-            <div className="flex space-x-2">
-              <input
-                type="text"
-                value={followUpQuestion}
-                onChange={(e) => setFollowUpQuestion(e.target.value)}
-                placeholder="Ask a question about the comparison..."
-                className="flex-1 px-4 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                disabled={isAskingFollowUp}
-              />
-              <Button 
-                onClick={handleAskFollowUp}
-                disabled={!followUpQuestion.trim() || isAskingFollowUp}
-              >
-                {isAskingFollowUp ? <LoadingIndicator size="sm" /> : 'Ask'}
-              </Button>
+            )}
+            
+            {/* Follow-up Question Section */}
+            <div className="mt-8 border-t pt-6">
+              <h3 className="text-lg font-medium mb-2">Ask a Follow-up Question</h3>
+              <div className="flex space-x-2">
+                <input
+                  type="text"
+                  value={followUpQuestion}
+                  onChange={(e) => setFollowUpQuestion(e.target.value)}
+                  placeholder="Ask a question about the comparison..."
+                  className="flex-1 px-4 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                  disabled={isAskingFollowUp}
+                />
+                <Button 
+                  onClick={handleAskFollowUp}
+                  disabled={!followUpQuestion.trim() || isAskingFollowUp}
+                >
+                  {isAskingFollowUp ? <LoadingIndicator size="sm" /> : 'Ask'}
+                </Button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

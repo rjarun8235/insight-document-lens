@@ -199,20 +199,240 @@ Organize this information into a comparison table, then provide analysis in the 
   return instruction;
 }
 
+// Helper function to prepare system instructions for Claude API
+function prepareSystemInstructions(): string {
+  // Create system message with instructions
+  const systemMessage = `You are DocLensAI, an expert document analyzer for TSV Global Solutions. Your role is to analyze and compare documents with precision and accuracy.
+
+IMPORTANT GUIDELINES:
+- Only make claims that are directly supported by the documents. If you're unsure about any information or can't find it in the documents, explicitly state "I don't have enough information to determine this" rather than making assumptions.
+- For each section of your analysis, first extract relevant quotes from the documents, then base your analysis only on those quotes.
+- Maintain a professional, factual tone throughout your analysis.
+- When comparing documents, highlight specific differences with direct citations from the documents.
+- If the documents are unclear or ambiguous, acknowledge this uncertainty rather than guessing.
+- Format your response consistently using the structure below.
+- IMPORTANT: You must handle ANY NUMBER of documents, not just two. If more than two documents are provided, create comparison tables that include ALL documents.
+
+REQUIRED OUTPUT FORMAT FOR MULTIPLE DOCUMENTS:
+<comparison_tables>
+| Field | Document 1 | Document 2 | Document 3 | ... | Document N |
+| ----- | ---------- | ---------- | ---------- | --- | ---------- |
+| Field Name | Value from Doc 1 | Value from Doc 2 | Value from Doc 3 | ... | Value from Doc N |
+...additional rows as needed
+</comparison_tables>
+
+<section_name>Verification</section_name>
+<quotes>
+Direct quotes from documents related to verification.
+</quotes>
+<analysis>
+Your analysis of verification aspects, based only on the quotes above.
+</analysis>
+
+<section_name>Validation</section_name>
+<quotes>
+Direct quotes from documents related to validation.
+</quotes>
+<analysis>
+Your analysis of validation aspects, based only on the quotes above.
+</analysis>
+
+<section_name>Review</section_name>
+<quotes>
+Direct quotes from documents related to review.
+</quotes>
+<analysis>
+Your analysis of review aspects, based only on the quotes above.
+</analysis>
+
+<section_name>Analysis</section_name>
+<quotes>
+Direct quotes from documents related to general analysis.
+</quotes>
+<analysis>
+Your overall analysis, based only on the quotes above.
+</analysis>
+
+<section_name>Summary</section_name>
+<quotes>
+Key quotes that summarize the documents.
+</quotes>
+<analysis>
+Your summary of the documents, based only on the quotes above.
+</analysis>
+
+<section_name>Insights</section_name>
+<quotes>
+Quotes that lead to insights.
+</quotes>
+<analysis>
+Your insights based only on the quotes above.
+</analysis>
+
+<section_name>Recommendations</section_name>
+<quotes>
+Quotes that inform recommendations.
+</quotes>
+<analysis>
+Your recommendations based only on the quotes above.
+</analysis>
+
+<section_name>Risks</section_name>
+<quotes>
+Quotes that indicate risks.
+</quotes>
+<analysis>
+Your risk assessment based only on the quotes above.
+</analysis>
+
+<section_name>Issues</section_name>
+<quotes>
+Quotes that highlight issues.
+</quotes>
+<analysis>
+Your analysis of issues based only on the quotes above.
+</analysis>`;
+
+  // Add specific instructions for handling empty or missing values
+  const enhancedSystemMessage = `${systemMessage}
+
+IMPORTANT ADDITIONAL INSTRUCTIONS:
+- For any document where you cannot extract specific fields, clearly indicate this with "No data available" or similar text.
+- If a field exists in one document but not in others, still include that field in your comparison table with empty values for documents where it's not present.
+- Always provide values for ALL documents in the comparison, even if some documents have minimal or no extractable data.
+- If a document appears to be completely different from others (different document type), note this in your analysis.`;
+
+  return enhancedSystemMessage;
+}
+
 // Claude API service
 export default class ClaudeService {
   private apiKey: string;
-
+  
   constructor() {
-    // We don't need to fetch the API key anymore since the proxy handles it
-    // Just initialize with empty string as we'll use the proxy
     this.apiKey = '';
   }
   
+  async analyzeDocuments(
+    documents: ParsedDocument[],
+    instruction: string,
+    useCache: boolean = true
+  ): Promise<{result: ComparisonResult, tokenUsage: {input: number, output: number, cost: number}}> {
+    try {
+      // Log the instruction for debugging prompt engineering
+      console.log('🔍 Analyzing documents with instruction:', instruction);
+      
+      // Log document information
+      console.log(`📄 Processing ${documents.length} documents:`);
+      documents.forEach((doc, index) => {
+        console.log(`  Document ${index + 1}: ${doc.documentType || 'unknown type'}, ${doc.text ? doc.text.length : 0} characters`);
+      });
+      
+      // Prepare the system instructions
+      const systemInstructions = prepareSystemInstructions();
+      console.log('🧠 System instructions length:', systemInstructions.length, 'characters');
+      
+      // Create document text for the prompt
+      const documentTexts = documents.map((doc, index) => {
+        return `DOCUMENT ${index + 1}:\n${doc.text || '[No text content available]'}`;
+      }).join('\n\n---\n\n');
+      
+      // Create the messages for the API call
+      const messages = [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: `${systemInstructions}\n\nDOCUMENTS TO ANALYZE:\n\n${documentTexts}\n\nUser instruction: ${instruction}`
+            }
+          ]
+        }
+      ];
+      
+      // Log prompt size metrics
+      const promptText = messages[0].content[0].text;
+      console.log('📝 Prompt metrics:');
+      console.log(`  - Total length: ${promptText.length} characters`);
+      console.log(`  - Estimated tokens: ~${Math.ceil(promptText.length / 4)}`);
+      
+      // Call the Claude API
+      const response = await this.callClaudeApi({
+        model: 'claude-3-haiku-20240307',
+        max_tokens: 4000,
+        messages: messages
+      });
+      
+      console.log('✅ Claude API response received');
+      console.log('📊 Token usage:', response.tokenUsage);
+      
+      // Log a sample of the response for debugging
+      const result = response.result;
+      console.log('🔍 Response analysis:');
+      console.log('  - Tables:', result.tables ? result.tables.length : 0);
+      
+      // Log the first few rows of the first table if available
+      if (result.tables && result.tables.length > 0 && result.tables[0].rows) {
+        console.log('  - Sample table data (first 3 rows):');
+        const sampleRows = result.tables[0].rows.slice(0, 3);
+        sampleRows.forEach((row, i) => {
+          console.log(`    Row ${i + 1}:`, row);
+        });
+      }
+      
+      // Log a sample of each analysis section
+      const sectionSamples: Record<string, string> = {};
+      const sectionKeys = ['verification', 'validation', 'review', 'analysis', 'summary', 'insights', 'recommendations'];
+      
+      sectionKeys.forEach(key => {
+        if (result[key]) {
+          const text = result[key] as string;
+          sectionSamples[key] = text.length > 100 ? text.substring(0, 100) + '...' : text;
+        }
+      });
+      
+      console.log('  - Analysis sections:', sectionSamples);
+      
+      // Evaluate response quality
+      const hasTabularData = result.tables && result.tables.length > 0 && result.tables[0].rows && result.tables[0].rows.length > 0;
+      const hasAnalysisText = sectionKeys.some(key => result[key] && (result[key] as string).length > 100);
+      
+      console.log('📋 Response quality assessment:');
+      console.log('  - Has tabular data:', hasTabularData ? '✅ Yes' : '❌ No');
+      console.log('  - Has detailed analysis:', hasAnalysisText ? '✅ Yes' : '❌ No');
+      console.log('  - Overall completeness:', 
+        hasTabularData && hasAnalysisText ? '✅ Good' : 
+        (hasTabularData || hasAnalysisText ? '⚠️ Partial' : '❌ Poor'));
+      
+      return { result, tokenUsage: response.tokenUsage };
+    } catch (error) {
+      console.error('Error calling Claude API:', error);
+      throw new Error('Authentication error: Please check your Claude API key.');
+    }
+  }
+
   async callClaudeApi(payload: any): Promise<any> {
     let responseData;
     const maxRetries = 3;
     let retryCount = 0;
+    
+    // Log the API request for debugging
+    console.log('📤 Claude API request:');
+    console.log('  - Model:', payload.model);
+    console.log('  - Max tokens:', payload.max_tokens);
+    
+    // Log prompt details for optimization
+    if (payload.messages && payload.messages.length > 0) {
+      const userMessage = payload.messages.find((m: any) => m.role === 'user');
+      if (userMessage && userMessage.content && userMessage.content.length > 0) {
+        const promptText = userMessage.content[0].text;
+        console.log('  - Prompt length:', promptText.length, 'characters');
+        
+        // Calculate approximate token count (rough estimate: 4 chars ≈ 1 token)
+        const estimatedTokens = Math.ceil(promptText.length / 4);
+        console.log('  - Estimated prompt tokens:', estimatedTokens);
+      }
+    }
     
     while (retryCount < maxRetries) {
       try {
@@ -261,7 +481,19 @@ export default class ClaudeService {
     const outputCost = (outputTokens / 1000000) * 75;
     const totalCost = inputCost + outputCost;
     
-    console.log(`Token usage - Input: ${inputTokens}, Output: ${outputTokens}, Estimated cost: $${totalCost.toFixed(4)}`);
+    console.log(`📊 Token usage - Input: ${inputTokens}, Output: ${outputTokens}, Estimated cost: $${totalCost.toFixed(4)}`);
+    
+    // Log response structure for debugging
+    console.log('📥 Claude API response structure:');
+    if (responseData.content && responseData.content.length > 0) {
+      console.log('  - Response type:', responseData.content[0].type);
+      
+      if (responseData.content[0].type === 'text') {
+        const text = responseData.content[0].text;
+        console.log('  - Response length:', text.length, 'characters');
+        console.log('  - Response preview:', text.substring(0, 100) + '...');
+      }
+    }
     
     return {
       result: this.processResponse(responseData),
@@ -272,7 +504,7 @@ export default class ClaudeService {
       }
     };
   }
-  
+
   processResponse(responseData: any): ComparisonResult {
     // Get the response text
     const responseText = responseData.content[0].text;
@@ -418,266 +650,5 @@ export default class ClaudeService {
     });
 
     return result;
-  }
-
-  // Main Claude analysis, for both images & text files, tailored for logistics docs and standard use
-  async analyzeDocuments(
-    documents: ParsedDocument[],
-    instruction: string,
-    useCache: boolean = true
-  ): Promise<{result: ComparisonResult, tokenUsage: {input: number, output: number, cost: number}}> {
-    // Prepare content for Claude API
-    let userContent: any[] = [];
-    let estimatedImageTokens = 0;
-    
-    // Check if we have any images to process
-    const hasImages = documents.some(doc => doc.image);
-    
-    if (hasImages) {
-      // Handle multimodal content (images + text)
-      const multimodalContent = await Promise.all(
-        documents.map(async doc => {
-          if (!doc.image && doc.text) {
-            // Just text (parsed contents of CSV, Excel, etc)
-            return {
-              type: "text",
-              text: doc.text
-            };
-          } else if (doc.image) {
-            try {
-              // Handle based on document type
-              if (doc.documentType === 'pdf') {
-                // PDF document - use document type for better handling
-                console.log(`Processing PDF document: ${doc.image.name} (${Math.round(doc.image.size / 1024)} KB)`);
-                
-                // Convert PDF to base64
-                const base64Data = await fileToBase64(doc.image);
-                
-                // Return as document type with the latest API format
-                return {
-                  type: "document",
-                  source: {
-                    type: "base64",
-                    media_type: "application/pdf",
-                    data: base64Data.base64
-                  },
-                  cache_control: { type: "ephemeral" }
-                };
-              } else {
-                // Image (with base64)
-                const { base64, mediaType } = await fileToBase64(doc.image);
-                
-                // Estimate token usage: tokens = (width px * height px)/750
-                const img = new Image();
-                img.src = URL.createObjectURL(doc.image);
-                await new Promise(resolve => {
-                  img.onload = resolve;
-                  img.onerror = resolve;
-                });
-                
-                const width = img.width || 1000; // Default if can't determine
-                const height = img.height || 1000; // Default if can't determine
-                URL.revokeObjectURL(img.src);
-                
-                const imageTokenEstimate = Math.ceil((width * height) / 750);
-                estimatedImageTokens += imageTokenEstimate;
-                
-                console.log(`Image: ${doc.image.name}, Size: ${width}x${height}, Estimated tokens: ${imageTokenEstimate}`);
-                
-                // Create image content object following Claude's latest API format
-                const imageContent = {
-                  type: "image",
-                  source: {
-                    type: "base64",
-                    media_type: mediaType,
-                    data: base64
-                  },
-                  cache_control: { type: "ephemeral" }
-                };
-
-                // Add associated OCR text (if present from front-end parser)
-                if (doc.text) {
-                  return [
-                    imageContent,
-                    {
-                      type: "text",
-                      text: doc.text
-                    }
-                  ];
-                }
-
-                return imageContent;
-              }
-            } catch (error) {
-              console.error('Error processing document:', error);
-              // Return a text fallback if processing fails
-              return {
-                type: "text",
-                text: `[Failed to process document. Using text fallback if available: ${doc.text || 'No text available'}]`
-              };
-            }
-          } else {
-            // Fallback to text if no image
-            return {
-              type: "text",
-              text: doc.text || "[No content available]"
-            };
-          }
-        })
-      );
-
-      // Log estimated token usage for images
-      if (estimatedImageTokens > 0) {
-        console.log(`Total estimated image tokens: ${estimatedImageTokens}`);
-        const estimatedCost = (estimatedImageTokens * 3) / 1000000; // $3 per million tokens
-        console.log(`Estimated image cost: $${estimatedCost.toFixed(6)}`);
-      }
-
-      // For multimodal content, we need to put everything in the user message
-      userContent = [
-        ...multimodalContent.flat(),
-        { 
-          type: "text", 
-          text: "\n\n" + instruction 
-        }
-      ];
-    } else {
-      // Text-only case - put documents in user message
-      const documentTexts = documents.map(doc => doc.text || '').join("\n\n---\n\n");
-
-      // Put documents and instruction in user message
-      userContent = [
-        {
-          type: "text",
-          text: documentTexts
-        },
-        {
-          type: "text",
-          text: "\n\n" + instruction
-        }
-      ];
-    }
-
-    // Get Claude model from environment variables or use default
-    const claudeModel = import.meta.env.VITE_CLAUDE_MODEL || "claude-3-5-sonnet-20240620";
-
-    // Create system message with instructions
-    const systemMessage = `You are DocLensAI, an expert document analyzer for TSV Global Solutions. Your role is to analyze and compare documents with precision and accuracy.
-
-IMPORTANT GUIDELINES:
-- Only make claims that are directly supported by the documents. If you're unsure about any information or can't find it in the documents, explicitly state "I don't have enough information to determine this" rather than making assumptions.
-- For each section of your analysis, first extract relevant quotes from the documents, then base your analysis only on those quotes.
-- Maintain a professional, factual tone throughout your analysis.
-- When comparing documents, highlight specific differences with direct citations from the documents.
-- If the documents are unclear or ambiguous, acknowledge this uncertainty rather than guessing.
-- Format your response consistently using the structure below.
-- IMPORTANT: You must handle ANY NUMBER of documents, not just two. If more than two documents are provided, create comparison tables that include ALL documents.
-
-REQUIRED OUTPUT FORMAT FOR MULTIPLE DOCUMENTS:
-<comparison_tables>
-| Field | Document 1 | Document 2 | Document 3 | ... | Document N |
-| ----- | ---------- | ---------- | ---------- | --- | ---------- |
-| Field Name | Value from Doc 1 | Value from Doc 2 | Value from Doc 3 | ... | Value from Doc N |
-...additional rows as needed
-</comparison_tables>
-
-<section_name>Verification</section_name>
-<quotes>
-Direct quotes from documents related to verification.
-</quotes>
-<analysis>
-Your analysis of verification aspects, based only on the quotes above.
-</analysis>
-
-<section_name>Validation</section_name>
-<quotes>
-Direct quotes from documents related to validation.
-</quotes>
-<analysis>
-Your analysis of validation aspects, based only on the quotes above.
-</analysis>
-
-<section_name>Review</section_name>
-<quotes>
-Direct quotes from documents related to review.
-</quotes>
-<analysis>
-Your analysis of review aspects, based only on the quotes above.
-</analysis>
-
-<section_name>Analysis</section_name>
-<quotes>
-Direct quotes from documents related to general analysis.
-</quotes>
-<analysis>
-Your overall analysis, based only on the quotes above.
-</analysis>
-
-<section_name>Summary</section_name>
-<quotes>
-Key quotes that summarize the documents.
-</quotes>
-<analysis>
-Your summary of the documents, based only on the quotes above.
-</analysis>
-
-<section_name>Insights</section_name>
-<quotes>
-Quotes that lead to insights.
-</quotes>
-<analysis>
-Your insights based only on the quotes above.
-</analysis>
-
-<section_name>Recommendations</section_name>
-<quotes>
-Quotes that inform recommendations.
-</quotes>
-<analysis>
-Your recommendations based only on the quotes above.
-</analysis>
-
-<section_name>Risks</section_name>
-<quotes>
-Quotes that indicate risks.
-</quotes>
-<analysis>
-Your risk assessment based only on the quotes above.
-</analysis>
-
-<section_name>Issues</section_name>
-<quotes>
-Quotes that highlight issues.
-</quotes>
-<analysis>
-Your analysis of issues based only on the quotes above.
-</analysis>`;
-
-    // Add specific instructions for handling empty or missing values
-    const enhancedSystemMessage = `${systemMessage}
-
-IMPORTANT ADDITIONAL INSTRUCTIONS:
-- For any document where you cannot extract specific fields, clearly indicate this with "No data available" or similar text.
-- If a field exists in one document but not in others, still include that field in your comparison table with empty values for documents where it's not present.
-- Always provide values for ALL documents in the comparison, even if some documents have minimal or no extractable data.
-- If a document appears to be completely different from others (different document type), note this in your analysis.`;
-
-    // Use the retry mechanism for the API call
-    try {
-      return await this.callClaudeApi({
-        model: claudeModel,
-        max_tokens: 4000,
-        system: enhancedSystemMessage,
-        messages: [
-          {
-            role: "user",
-            content: userContent
-          }
-        ]
-      });
-    } catch (error) {
-      console.error('Error calling Claude API:', error);
-      throw new Error(formatErrorMessage(error));
-    }
   }
 }
