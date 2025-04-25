@@ -23,15 +23,16 @@ export interface DocumentFile {
 
 export interface ComparisonResult {
   tables: ComparisonTable[];
-  verification: string;
-  validation: string;
-  review: string;
-  analysis: string;
-  summary: string;
-  insights: string;
-  recommendations: string;
-  risks: string;
-  issues: string;
+  itemComparison?: string[][];
+  verification?: string;
+  validation?: string;
+  review?: string;
+  analysis?: string;
+  summary?: string;
+  insights?: string;
+  recommendations?: string;
+  risks?: string;
+  issues?: string;
 }
 
 export interface ComparisonTable {

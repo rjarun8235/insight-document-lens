@@ -13,7 +13,6 @@ const claudeService = new ClaudeService();
 export function DocumentProcessor() {
   const [files, setFiles] = useState<DocumentFile[]>([]);
   const [parsedDocuments, setParsedDocuments] = useState<ParsedDocument[]>([]);
-  const [comparisonType, setComparisonType] = useState<string>('verification');
   const [comparisonResult, setComparisonResult] = useState<ComparisonResult | null>(null);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -128,7 +127,7 @@ export function DocumentProcessor() {
       setProcessingProgress(50); // Parsing complete, now analyzing
       
       // Get the comparison type instruction
-      const response = await claudeService.analyzeDocuments(parsed, getComparisonInstruction());
+      const response = await claudeService.analyzeDocuments(parsed, 'Compare these documents and identify key differences and similarities.');
       
       // Extract the result and token usage
       const { result, tokenUsage } = response;
@@ -151,7 +150,7 @@ export function DocumentProcessor() {
       setProcessingProgress(50); // Parsing complete, now analyzing
       
       // Get the comparison type instruction
-      const response = await claudeService.analyzeDocuments(parsed, getComparisonInstruction());
+      const response = await claudeService.analyzeDocuments(parsed, 'Compare these documents and identify key differences and similarities.');
       
       // Extract the result and token usage
       const { result, tokenUsage } = response;
@@ -164,24 +163,6 @@ export function DocumentProcessor() {
       console.error('Error analyzing files:', err);
       setError(`Error analyzing files: ${err instanceof Error ? err.message : 'Unknown error'}`);
       throw err;
-    }
-  };
-
-  // Get the comparison instruction based on the selected type
-  const getComparisonInstruction = () => {
-    switch (comparisonType) {
-      case 'verification':
-        return 'Verify the accuracy and completeness of these documents. Identify any discrepancies or missing information.';
-      case 'validation':
-        return 'Validate these documents against standard requirements. Check for compliance with expected formats and required fields.';
-      case 'logistics':
-        return 'Compare these logistics documents (packing lists, invoices, bills of entry, etc.). Identify discrepancies in quantities, prices, dates, and other key information.';
-      case 'contracts':
-        return 'Compare these contract documents. Identify differences in terms, conditions, dates, parties involved, and obligations.';
-      case 'financial':
-        return 'Compare these financial documents. Identify differences in amounts, dates, accounts, and other financial details.';
-      default:
-        return 'Compare these documents and identify key differences and similarities.';
     }
   };
 
@@ -215,7 +196,7 @@ export function DocumentProcessor() {
       setProcessingStage('Documents processed. Analyzing with Claude AI...');
       
       // Get the comparison type instruction
-      const response = await claudeService.analyzeDocuments(parsed, getComparisonInstruction());
+      const response = await claudeService.analyzeDocuments(parsed, 'Compare these documents and identify key differences and similarities.');
       
       // Extract the result and token usage
       const { result, tokenUsage } = response;
@@ -278,21 +259,6 @@ export function DocumentProcessor() {
         <FileUpload onFilesSelected={handleFilesSelected} />
         
         <div className="mt-4">
-          <div className="flex items-center space-x-2 mb-3">
-            <h3 className="text-lg font-medium">Comparison Type:</h3>
-            <select 
-              value={comparisonType}
-              onChange={(e) => setComparisonType(e.target.value)}
-              className="px-3 py-1 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-            >
-              <option value="verification">Verification</option>
-              <option value="validation">Validation</option>
-              <option value="logistics">Logistics</option>
-              <option value="contracts">Contracts</option>
-              <option value="financial">Financial</option>
-            </select>
-          </div>
-          
           <Button 
             onClick={handleCompare}
             disabled={isProcessing || files.length === 0}

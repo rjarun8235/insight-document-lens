@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/custom-button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 interface ComparisonViewProps {
-  result: ComparisonResult;
+  result: Partial<ComparisonResult>;
   documentNames: string[];
 }
 
@@ -112,9 +112,22 @@ const CustomTabsContent = ({ value, className, children }: {
   );
 };
 
-export const ComparisonView = ({ result, documentNames }: ComparisonViewProps) => {
-  const [activeTab, setActiveTab] = useState<string>('tables');
+export function ComparisonView({ result, documentNames }: ComparisonViewProps) {
+  const [activeTab, setActiveTab] = useState('tables');
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
+  
+  // Extract sections from the result
+  const sections = [
+    { id: 'verification', title: 'Verification', content: result.verification || '' },
+    { id: 'validation', title: 'Validation', content: result.validation || '' },
+    { id: 'review', title: 'Review', content: result.review || '' },
+    { id: 'analysis', title: 'Analysis', content: result.analysis || '' },
+    { id: 'summary', title: 'Summary', content: result.summary || '' },
+    { id: 'insights', title: 'Insights', content: result.insights || '' },
+    { id: 'recommendations', title: 'Recommendations', content: result.recommendations || '' },
+    { id: 'risks', title: 'Risks', content: result.risks || '' },
+    { id: 'issues', title: 'Issues', content: result.issues || '' }
+  ].filter(section => section.content); // Only include sections with content
   
   // Toggle section expansion
   const toggleSection = (section: string) => {
@@ -184,7 +197,7 @@ export const ComparisonView = ({ result, documentNames }: ComparisonViewProps) =
         {/* Tables View */}
         {activeTab === 'tables' && (
           <div className="space-y-4 mt-4">
-            {result.tables.map((table, tableIndex) => (
+            {result.tables?.map((table, tableIndex) => (
               <div key={tableIndex} className="border rounded-lg overflow-hidden">
                 <div className="bg-muted p-3 font-medium border-b">
                   {table.title || `Table ${tableIndex + 1}`}
@@ -234,7 +247,7 @@ export const ComparisonView = ({ result, documentNames }: ComparisonViewProps) =
         {/* Side by Side View */}
         {activeTab === 'sideBySide' && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-            {documentNames.length > 0 && result.tables.length > 0 && (
+            {documentNames.length > 0 && result.tables?.length > 0 && (
               <>
                 {/* First document column */}
                 <div className="border rounded-lg overflow-hidden">
@@ -304,30 +317,20 @@ export const ComparisonView = ({ result, documentNames }: ComparisonViewProps) =
         {/* Analysis View */}
         {activeTab === 'analysis' && (
           <div className="space-y-4 mt-4">
-            {[
-              { key: 'verification', title: 'Verification' },
-              { key: 'validation', title: 'Validation' },
-              { key: 'review', title: 'Review' },
-              { key: 'analysis', title: 'Analysis' },
-              { key: 'summary', title: 'Summary' },
-              { key: 'insights', title: 'Insights' },
-              { key: 'recommendations', title: 'Recommendations' },
-              { key: 'risks', title: 'Risks' },
-              { key: 'issues', title: 'Issues' }
-            ].map(section => (
-              <div key={section.key} className="border rounded-lg overflow-hidden">
+            {sections.map(section => (
+              <div key={section.id} className="border rounded-lg overflow-hidden">
                 <div 
                   className="bg-muted p-3 font-medium border-b flex justify-between items-center cursor-pointer"
-                  onClick={() => toggleSection(section.key)}
+                  onClick={() => toggleSection(section.id)}
                 >
                   <h3>{section.title}</h3>
                   <Button variant="ghost" size="sm">
-                    {expandedSection === section.key ? '−' : '+'}
+                    {expandedSection === section.id ? '−' : '+'}
                   </Button>
                 </div>
-                {(expandedSection === section.key || expandedSection === null) && (
+                {(expandedSection === section.id || expandedSection === null) && (
                   <div className="p-4 prose prose-sm max-w-none">
-                    {formatSectionContent(result[section.key as keyof ComparisonResult] as string)}
+                    {formatSectionContent(section.content)}
                   </div>
                 )}
               </div>
@@ -345,7 +348,7 @@ export const ComparisonView = ({ result, documentNames }: ComparisonViewProps) =
             const content = `
               # Document Comparison Results
               
-              ${result.tables.map(table => `
+              ${result.tables?.map(table => `
                 ## ${table.title || 'Comparison Table'}
                 ${table.headers.join(' | ')}
                 ${'-'.repeat(table.headers.join(' | ').length)}
@@ -354,10 +357,7 @@ export const ComparisonView = ({ result, documentNames }: ComparisonViewProps) =
               
               ## Analysis Sections
               
-              ${Object.entries(result)
-                .filter(([key]) => key !== 'tables')
-                .map(([key, value]) => `### ${key.charAt(0).toUpperCase() + key.slice(1)}\n${value}`)
-                .join('\n\n')}
+              ${sections.map(section => `### ${section.title}\n${section.content}`).join('\n\n')}
             `;
             
             // Create and download text file
@@ -395,7 +395,7 @@ export const ComparisonView = ({ result, documentNames }: ComparisonViewProps) =
                 <body>
                   <h1>Document Comparison Results</h1>
                   
-                  ${result.tables.map(table => `
+                  ${result.tables?.map(table => `
                     <h2>${table.title || 'Comparison Table'}</h2>
                     <table>
                       <thead>
@@ -415,14 +415,12 @@ export const ComparisonView = ({ result, documentNames }: ComparisonViewProps) =
                   
                   <h2>Analysis Sections</h2>
                   
-                  ${Object.entries(result)
-                    .filter(([key]) => key !== 'tables')
-                    .map(([key, value]) => `
-                      <div class="section">
-                        <h3>${key.charAt(0).toUpperCase() + key.slice(1)}</h3>
-                        <div>${(value as string).replace(/\n/g, '<br>')}</div>
-                      </div>
-                    `).join('')}
+                  ${sections.map(section => `
+                    <div class="section">
+                      <h3>${section.title}</h3>
+                      <div>${(section.content).replace(/\n/g, '<br>')}</div>
+                    </div>
+                  `).join('')}
                 </body>
               </html>
             `;
