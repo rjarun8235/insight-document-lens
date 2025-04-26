@@ -7,7 +7,7 @@
 
 import TSVDocumentIntelligenceService from './multi-stage-claude-service';
 import ClaudeService from './claude-service';
-import { ParsedDocument, ComparisonResult } from '../lib/types';
+import { ParsedDocument, ComparisonResult, DocumentType } from '../lib/types';
 
 // Underlying implementation using proprietary TSV Global AI technology
 const multiStageService = new TSVDocumentIntelligenceService();
@@ -15,24 +15,75 @@ const baseService = new ClaudeService();
 
 export default class DocLensService {
   /**
-   * Process documents using DocLens advanced 3-stage pipeline
-   * 
-   * @param documents Array of parsed documents to process
-   * @param comparisonType Type of comparison to perform
-   * @param options Processing options
-   * @returns Processing result with comparison data and metadata
+   * Detect the appropriate comparison type based on document types
+   */
+  async detectComparisonType(documents: ParsedDocument[]): Promise<string> {
+    // Extract document types
+    const types = documents.map(doc => doc.type || 'unknown');
+    
+    // Check for specific document type combinations
+    const hasInvoice = types.some(type => type.toLowerCase().includes('invoice'));
+    const hasBOL = types.some(type => 
+      type.toLowerCase().includes('bill of lading') || 
+      type.toLowerCase().includes('bol')
+    );
+    const hasPackingList = types.some(type => type.toLowerCase().includes('packing list'));
+    const hasPO = types.some(type => 
+      type.toLowerCase().includes('purchase order') || 
+      type.toLowerCase().includes('po')
+    );
+    
+    // Determine comparison type based on document combinations
+    if (hasInvoice && hasBOL) {
+      return 'Invoice-BOL';
+    } else if (hasInvoice && hasPackingList) {
+      return 'Invoice-PackingList';
+    } else if (hasInvoice && hasPO) {
+      return 'Invoice-PO';
+    } else if (hasBOL && hasPackingList) {
+      return 'BOL-PackingList';
+    } else if (hasBOL && hasPO) {
+      return 'BOL-PO';
+    } else if (hasPackingList && hasPO) {
+      return 'PackingList-PO';
+    }
+    
+    // Default to generic comparison if no specific type is detected
+    return 'Logistics Documents';
+  }
+
+  /**
+   * Process documents using the multi-stage Claude service
    */
   async processDocuments(
-    documents: ParsedDocument[],
-    comparisonType: string,
+    documents: ParsedDocument[], 
+    comparisonType: string = 'Logistics Documents',
     options: {
-      skipValidation?: boolean;
       showThinking?: boolean;
       useExtendedOutput?: boolean;
+      skipValidation?: boolean;
     } = {}
-  ) {
+  ): Promise<{
+    result: ComparisonResult;
+    stages: any;
+    totalTokenUsage: {
+      input: number;
+      output: number;
+      cost: number;
+      cacheSavings?: number;
+    };
+  }> {
     console.log('🚀 Starting DocLens multi-stage document processing pipeline');
-    return await multiStageService.processDocuments(documents, comparisonType, options);
+    
+    // Process documents with the multi-stage service
+    const result = await multiStageService.processDocuments(documents, comparisonType, options);
+    
+    // Return the result with properly structured token usage
+    return {
+      result: result.result,
+      stages: result.stages,
+      totalTokenUsage: result.totalTokenUsage
+    };
   }
 
   /**

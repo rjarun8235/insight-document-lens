@@ -45,11 +45,9 @@ export function DocumentProcessor() {
   const [showThinking, setShowThinking] = useState<boolean>(true);
   const [thinkingProcess, setThinkingProcess] = useState<string | null>(null);
   const [stageResults, setStageResults] = useState<any | null>(null);
-
-  // Set document title
-  useEffect(() => {
-    document.title = "DocLens";
-  }, []);
+  const [currentStage, setCurrentStage] = useState<string>('');
+  const [stageProgress, setStageProgress] = useState<number>(0);
+  const [result, setResult] = useState<any | null>(null);
 
   // Auto-detect appropriate comparison type based on file types
   useEffect(() => {
@@ -161,6 +159,62 @@ export function DocumentProcessor() {
     }
   };
 
+  /**
+   * Process documents and generate comparison
+   */
+  const processDocuments = async () => {
+    if (files.length < 2) {
+      setError('Please upload at least two documents to compare');
+      return;
+    }
+
+    setIsProcessing(true);
+    setError(null);
+    setComparisonResult(null);
+    setThinkingProcess(null);
+    setCurrentStage('extraction');
+    setStageProgress(0);
+
+    try {
+      // First parse the files to get ParsedDocument objects
+      const parsed = await Promise.all(files.map(file => parseDocument(file)));
+      
+      // Create a new instance of the DocLens service
+      const service = new DocLensService();
+      
+      // Determine comparison type automatically based on document types
+      const detectedType = await service.detectComparisonType(parsed);
+      setComparisonType(detectedType);
+      
+      // Process the documents with the DocLens service
+      const result = await service.processDocuments(
+        parsed,
+        detectedType,
+        {
+          showThinking,
+          useExtendedOutput: processingMode === 'advanced'
+        }
+      );
+      
+      // Update state with the results
+      setComparisonResult(result.result);
+      setResult(result); // Store the full result including stages and token usage
+      setTokenUsage(result.totalTokenUsage);
+      setThinkingProcess(result.stages?.validation?.thinkingProcess || null);
+      setStageResults(result.stages);
+      
+      setIsProcessing(false);
+      setProcessingProgress(100);
+      
+      return result;
+    } catch (error) {
+      console.error('Error processing documents:', error);
+      setError(`Error processing documents: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   const handleCompare = async () => {
     if (files.length < 2) {
       setError('Please upload at least two documents for comparison.');
@@ -193,45 +247,8 @@ export function DocumentProcessor() {
         // Advanced 3-stage processing
         const useValidation = true;
         
-        // Stage 1: Extraction
-        setProcessingStage('Stage 1/3: Extracting document data with DocLens AI...');
-        setProcessingProgress(30);
-        
-        // Stage 2: Analysis
-        setTimeout(() => {
-          setProcessingStage('Stage 2/3: Analyzing document content with DocLens AI...');
-          setProcessingProgress(60);
-        }, 2000);
-        
-        // Stage 3: Validation
-        setTimeout(() => {
-          setProcessingStage('Stage 3/3: Validating analysis with DocLens AI reasoning...');
-          setProcessingProgress(80);
-        }, 4000);
-        
-        // Call the DocLens service
-        const result = await docLensService.processDocuments(
-          parsed,
-          comparisonType,
-          {
-            skipValidation: !useValidation,
-            showThinking: showThinking && useValidation,
-            useExtendedOutput: useValidation
-          }
-        );
-        
-        // Update state with results
-        setComparisonResult(result.result);
-        setTokenUsage(result.totalTokenUsage);
-        setStageResults(result.stages);
-        
-        // Set thinking process if available
-        if (showThinking && result.stages.validation?.thinkingProcess) {
-          setThinkingProcess(result.stages.validation.thinkingProcess);
-        }
-        
-        setProcessingProgress(100);
-        setProcessingStage('Analysis complete!');
+        // Call the processDocuments function
+        await processDocuments();
       }
     } catch (err) {
       console.error('Comparison process failed:', err);
@@ -277,6 +294,39 @@ export function DocumentProcessor() {
         setProcessingStage('');
       }, 1000);
     }
+  };
+
+  const renderTokenUsage = () => {
+    if (!result || !result.totalTokenUsage) return null;
+    
+    const { input, output, cost, cacheSavings } = result.totalTokenUsage;
+    
+    return (
+      <div className="mt-4 p-4 bg-gray-50 rounded-md text-sm">
+        <h3 className="font-semibold mb-2">Processing Metrics</h3>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <span className="font-medium">Input Tokens:</span> {input.toLocaleString()}
+          </div>
+          <div>
+            <span className="font-medium">Output Tokens:</span> {output.toLocaleString()}
+          </div>
+          <div>
+            <span className="font-medium">Total Cost:</span> ${cost.toFixed(6)}
+          </div>
+          {cacheSavings > 0 && (
+            <div className="text-green-600">
+              <span className="font-medium">Cache Savings:</span> ${cacheSavings.toFixed(6)} (90% discount)
+            </div>
+          )}
+        </div>
+        {result.stages?.extraction?.tokenUsage?.cacheSavings > 0 && (
+          <div className="mt-2 text-xs text-green-700">
+            <span className="font-medium">✓ Prompt Caching:</span> Enabled (90% cost reduction on cached content)
+          </div>
+        )}
+      </div>
+    );
   };
 
   return (
@@ -343,7 +393,7 @@ export function DocumentProcessor() {
         
         {/* Results Display */}
         {comparisonResult && (
-          <div className="results-section">
+          <div className="results-section" id="results-section">
             <ComparisonView result={comparisonResult} documentNames={documentNames} />
             
             {/* Thinking Process */}
@@ -413,28 +463,7 @@ export function DocumentProcessor() {
             )}
             
             {/* Token Usage Information */}
-            {tokenUsage && (
-              <div className="mt-4 p-3 bg-gray-50 border rounded-md text-sm">
-                <h4 className="font-medium mb-1">DocLens API Usage Information</h4>
-                <div className="grid grid-cols-3 gap-2">
-                  <div>
-                    <p className="text-gray-600">Input Tokens</p>
-                    <p className="font-medium">{tokenUsage.input.toLocaleString()}</p>
-                  </div>
-                  <div>
-                    <p className="text-gray-600">Output Tokens</p>
-                    <p className="font-medium">{tokenUsage.output.toLocaleString()}</p>
-                  </div>
-                  <div>
-                    <p className="text-gray-600">Estimated Cost</p>
-                    <p className="font-medium">${tokenUsage.cost.toFixed(6)}</p>
-                  </div>
-                </div>
-                <p className="text-xs text-gray-500 mt-2">
-                  Cost estimate based on DocLens API pricing.
-                </p>
-              </div>
-            )}
+            {renderTokenUsage()}
             
             {/* Follow-up Question Section */}
             <div className="mt-8 border-t pt-6">

@@ -1,59 +1,89 @@
 import { ComparisonResult, ComparisonTable, ParsedDocument } from '../lib/types';
 import { prepareInstructions, prepareSystemInstructions } from './claude-service';
+import axios from 'axios';
+
+// Claude API types
+interface ContentBlock {
+  type: string;
+  text?: string;
+  source?: {
+    type: string;
+    media_type: string;
+    data: string;
+  };
+  cache_control?: {
+    type: string;
+  };
+}
+
+interface CreateMessageParams {
+  model: string;
+  max_tokens: number;
+  messages: Array<{
+    role: string;
+    content: string | ContentBlock[];
+  }>;
+  thinking?: {
+    type: string;
+    budget_tokens: number;
+  };
+}
 
 // Model configuration for different stages
 type ModelConfig = {
   name: string;
   maxTokens: number;
-  temperature: number;
+  temperature?: number;
+  thinkingBudget?: number;
   costPerInputMToken: number;
   costPerOutputMToken: number;
 };
 
 const MODELS = {
   EXTRACTION: {
-    name: 'claude-3-5-haiku-20241022',
-    maxTokens: 4000,
-    temperature: 0.1,
-    costPerInputMToken: 0.80,
-    costPerOutputMToken: 4.00
+    name: 'claude-3-5-sonnet-20241022',
+    maxTokens: 4096,
+    costPerInputMToken: 3.0,
+    costPerOutputMToken: 15.0
   },
   ANALYSIS: {
     name: 'claude-3-5-sonnet-20241022',
-    maxTokens: 4000,
-    temperature: 0.2,
-    costPerInputMToken: 3.00,
-    costPerOutputMToken: 15.00
+    maxTokens: 4096,
+    costPerInputMToken: 3.0,
+    costPerOutputMToken: 15.0
   },
   VALIDATION: {
     name: 'claude-3-7-sonnet-20250219',
     maxTokens: 16000,
-    temperature: 0.1,
-    costPerInputMToken: 3.00,
-    costPerOutputMToken: 15.00,
-    thinkingBudget: 8000
+    thinkingBudget: 32000,
+    costPerInputMToken: 3.0,
+    costPerOutputMToken: 15.0
   }
 };
 
 // Result types for each stage
 interface ExtractionResult {
-  documentData: Record<string, any>[];
+  documentData: any[];
   documentTypes: string[];
-  extractedFields: Record<string, string[]>;
+  extractedFields: Record<string, any[]>;
   rawText: string;
-  tokenUsage: { input: number; output: number; cost: number };
+  tokenUsage: { input: number; output: number; cost: number; cacheSavings?: number };
 }
 
 interface AnalysisResult {
   comparisonResult: ComparisonResult;
-  tokenUsage: { input: number; output: number; cost: number };
+  rawText: string;
+  tokenUsage: { input: number; output: number; cost: number; cacheSavings?: number };
 }
 
 interface ValidationResult {
-  validatedResult: ComparisonResult;
-  confidence: number;
-  thinkingProcess?: string;
-  tokenUsage: { input: number; output: number; cost: number };
+  isValid: boolean;
+  confidenceScore: number;
+  thinkingProcess: string;
+  finalResults: string;
+  tables: ComparisonResult;
+  rawText: string;
+  tokenUsage: { input: number; output: number; cost: number; cacheSavings?: number };
 }
 
 interface MultiStageResult {
@@ -63,7 +93,7 @@ interface MultiStageResult {
     analysis: AnalysisResult;
     validation?: ValidationResult;
   };
-  totalTokenUsage: { input: number; output: number; cost: number };
+  totalTokenUsage: { input: number; output: number; cost: number; cacheSavings?: number };
 }
 
 /**
@@ -111,12 +141,10 @@ export default class TSVDocumentIntelligenceService {
     let validationResult: ValidationResult | undefined;
     if (!options.skipValidation) {
       console.log('🔍 Stage 3: Validating analysis with extended thinking');
-      validationResult = await this.validateAnalysis(
+      validationResult = await this.validateAnalysisWithExtendedThinking(
+        documents,
         extractionResult,
-        analysisResult.comparisonResult,
-        comparisonType,
-        options.showThinking || false,
-        options.useExtendedOutput || false
+        analysisResult
       );
       console.log('✅ Stage 3 complete: Validation');
     }
@@ -125,12 +153,13 @@ export default class TSVDocumentIntelligenceService {
     const totalTokenUsage = {
       input: extractionResult.tokenUsage.input + analysisResult.tokenUsage.input + (validationResult?.tokenUsage.input || 0),
       output: extractionResult.tokenUsage.output + analysisResult.tokenUsage.output + (validationResult?.tokenUsage.output || 0),
-      cost: extractionResult.tokenUsage.cost + analysisResult.tokenUsage.cost + (validationResult?.tokenUsage.cost || 0)
+      cost: extractionResult.tokenUsage.cost + analysisResult.tokenUsage.cost + (validationResult?.tokenUsage.cost || 0),
+      cacheSavings: extractionResult.tokenUsage.cacheSavings + analysisResult.tokenUsage.cacheSavings + (validationResult?.tokenUsage.cacheSavings || 0)
     };
     
     // Prepare final result
     const finalResult: MultiStageResult = {
-      result: validationResult ? validationResult.validatedResult : analysisResult.comparisonResult,
+      result: validationResult ? validationResult.tables : analysisResult.comparisonResult,
       stages: {
         extraction: extractionResult,
         analysis: analysisResult,
@@ -142,6 +171,9 @@ export default class TSVDocumentIntelligenceService {
     const endTime = performance.now();
     console.log(`🏁 Multi-stage processing complete in ${((endTime - startTime) / 1000).toFixed(2)}s`);
     console.log(`💰 Total cost: $${totalTokenUsage.cost.toFixed(6)}`);
+    if (totalTokenUsage.cacheSavings) {
+      console.log(`💸 Cache savings: $${totalTokenUsage.cacheSavings.toFixed(6)}`);
+    }
     
     return finalResult;
   }
@@ -150,33 +182,34 @@ export default class TSVDocumentIntelligenceService {
    * Stage 1: Extract data from documents
    */
   private async extractDocumentData(documents: ParsedDocument[]): Promise<ExtractionResult> {
-    // Prepare document content for the prompt
-    let documentTexts = '<documents>\n';
-    const documentContents: any[] = [];
+    // Prepare content blocks for the API request
+    const contentBlocks: ContentBlock[] = [];
     
-    // First, add text content for each document
+    // Add each document as a content block
     documents.forEach((doc, index) => {
-      documentTexts += `  <document index="${index + 1}">\n`;
-      documentTexts += `    <source>${doc.documentType || 'unknown'}_document_${index + 1}</source>\n`;
-      documentTexts += `    <document_content>\n${doc.text || '[No text content available]'}\n    </document_content>\n`;
-      documentTexts += `  </document>\n`;
-      
-      // For PDF files, we'll also add them as document content blocks
-      if (doc.documentType === 'pdf' && doc.image) {
-        documentContents.push({
+      if (doc.type === 'application/pdf' && doc.base64Data) {
+        // Add PDF as document content block with prompt caching
+        contentBlocks.push({
           type: 'document',
           source: {
             type: 'base64',
             media_type: 'application/pdf',
-            data: doc.base64Data || '[PDF data not available]'
-          }
+            data: doc.base64Data.replace(/^data:application\/pdf;base64,/, '')
+          },
+          cache_control: { type: 'ephemeral' } // Enable prompt caching for PDF documents
+        });
+      } else if (doc.content) {
+        // Add text content block for non-PDF documents
+        contentBlocks.push({
+          type: 'text',
+          text: `Document ${index + 1}: ${doc.name}\n\n${doc.content}`,
+          cache_control: { type: 'ephemeral' } // Enable prompt caching for text documents
         });
       }
     });
-    documentTexts += '</documents>\n\n';
     
-    // Add text instruction after document content blocks
-    documentContents.push({
+    // Add the extraction instructions as the final text block
+    contentBlocks.push({
       type: 'text',
       text: `
 You are a document data extraction specialist. Your task is to extract structured data from the provided documents.
@@ -188,7 +221,16 @@ For each document:
 2. Extract ALL key fields and their values exactly as they appear in the document
 3. For fields not present in a document, explicitly note "No data available"
 
-Return the extracted data in this JSON format:
+IMPORTANT: You MUST return your response in valid JSON format. Wrap the JSON in triple backticks with the json tag like this:
+\`\`\`json
+{
+  "documentData": [...],
+  "documentTypes": [...],
+  "extractedFields": {...}
+}
+\`\`\`
+
+The JSON must follow this exact structure:
 {
   "documentData": [
     {
@@ -219,189 +261,180 @@ IMPORTANT:
 - Be precise and accurate with all extracted data
 - For logistics documents, pay special attention to:
   * Consignee and Shipper information
-  * Invoice/PO/BL numbers
-  * Dates (issue date, shipping date, etc.)
-  * Product descriptions
-  * Quantities and units
-  * Prices and totals
-  * Package counts and weights
-  * Special instructions or notes
-- If you can't determine a document type, use "Unknown" and extract whatever fields are visible
-- If a document appears to be empty or unreadable, note this in your response
-`
+  * Document numbers and dates
+  * Item descriptions and quantities
+  * Weights and measurements
+  * Delivery terms and payment terms
+  * Container/shipment details
+  * Origin and destination information
+  * Any special instructions or remarks
+
+CRITICAL: If you cannot extract data from a document, explain why in your JSON response under a field called "Error" for that document.
+
+DO NOT include any explanations, notes, or text outside of the JSON structure. Your entire response must be valid JSON wrapped in the code block.
+`,
+      cache_control: { type: 'ephemeral' } // Enable prompt caching for extraction instructions
     });
     
-    // Prepare API call
-    const apiParams: any = {
-      model: MODELS.EXTRACTION.name,
-      max_tokens: MODELS.EXTRACTION.maxTokens,
-      temperature: MODELS.EXTRACTION.temperature,
-      messages: [
-        {
-          role: 'user',
-          content: documentContents.length > 0 ? documentContents : [
-            {
-              type: 'text',
-              text: documentTexts + `
-You are a document data extraction specialist. Your task is to extract structured data from the provided documents.
-
-CRITICAL INSTRUCTION: ONLY extract information that is ACTUALLY PRESENT in the documents. NEVER generate placeholder data, fictional company names, or make assumptions about missing information.
-
-For each document:
-1. Identify the document type (Invoice, Bill of Lading, Packing List, Purchase Order, etc.)
-2. Extract ALL key fields and their values exactly as they appear in the document
-3. For fields not present in a document, explicitly note "No data available"
-
-Return the extracted data in this JSON format:
-{
-  "documentData": [
-    {
-      "documentIndex": 1,
-      "documentType": "Invoice",
-      "fields": {
-        "Invoice Number": "12345",
-        "Date": "2023-01-15",
-        "Shipper": "Actual Company Name from Document",
-        "Consignee": "Actual Company Name from Document",
-        "Total Amount": "1,234.56",
-        "Currency": "USD",
-        // Include ALL fields found in the document
-      }
-    },
-    // Repeat for each document
-  ],
-  "documentTypes": ["Invoice", "Purchase Order", "Bill of Lading"],
-  "extractedFields": {
-    "Document Number": ["12345", "PO-6789", "BL-9876"],
-    "Date": ["2023-01-15", "2023-01-10", "2023-01-20"],
-    // Include all fields found across documents
-  }
-}
-
-IMPORTANT: 
-- Extract EVERY field and value present in the documents
-- Be precise and accurate with all extracted data
-- For logistics documents, pay special attention to:
-  * Consignee and Shipper information
-  * Invoice/PO/BL numbers
-  * Dates (issue date, shipping date, etc.)
-  * Product descriptions
-  * Quantities and units
-  * Prices and totals
-  * Package counts and weights
-  * Special instructions or notes
-- If you can't determine a document type, use "Unknown" and extract whatever fields are visible
-- If a document appears to be empty or unreadable, note this in your response
-`
-            }
-          ]
-        }
-      ]
-    };
-    
-    // Call Claude API for extraction
-    const extractionResponse = await this.callClaudeApi(apiParams);
-    
-    // Process the extraction result
+    // Prepare API call parameters
     try {
-      const contentText = extractionResponse.content?.[0]?.text || '';
+      // Log content blocks for debugging
+      console.log(`Sending ${contentBlocks.length} content blocks to Claude API`);
       
-      // Extract JSON from the response - using more flexible patterns to match various formats
-      const jsonMatch = contentText.match(/```json\n([\s\S]*?)\n```/) || 
-                        contentText.match(/```\n([\s\S]*?)\n```/) ||
-                        contentText.match(/```javascript\n([\s\S]*?)\n```/) ||
-                        contentText.match(/```js\n([\s\S]*?)\n```/) ||
-                        contentText.match(/{[\s\S]*"documentData"[\s\S]*"documentTypes"[\s\S]*"extractedFields"[\s\S]*}/);
-      
-      let extractedData;
-      
-      if (!jsonMatch) {
-        console.warn('Failed to extract JSON. Creating fallback structure. Raw response:', contentText);
-        
-        // Create a fallback structure based on the documents
-        extractedData = {
-          documentData: documents.map((doc, index) => {
-            const fileName = doc.image?.name || `document_${index + 1}`;
-            const docType = this.guessDocumentType(fileName);
-            
-            return {
-              documentIndex: index + 1,
-              documentType: docType,
-              fileName: fileName,
-              fields: {
-                "Document Type": docType,
-                "File Name": fileName,
-                "Note": "Document content could not be extracted. Please ensure the PDF contains readable text."
-              }
-            };
-          }),
-          documentTypes: documents.map((doc, index) => {
-            const fileName = doc.image?.name || `document_${index + 1}`;
-            return this.guessDocumentType(fileName);
-          }),
-          extractedFields: {
-            "Document Type": documents.map((doc, index) => {
-              const fileName = doc.image?.name || `document_${index + 1}`;
-              return this.guessDocumentType(fileName);
-            }),
-            "File Name": documents.map(doc => doc.image?.name || "Unknown")
+      // Prepare API call parameters
+      const apiParams: CreateMessageParams = {
+        model: MODELS.EXTRACTION.name,
+        max_tokens: MODELS.EXTRACTION.maxTokens,
+        messages: [
+          {
+            role: 'user',
+            content: contentBlocks
           }
-        };
-      } else {
-        let jsonText = jsonMatch[1] || jsonMatch[0];
-        
-        // Clean up the JSON text - remove any markdown artifacts or extra text
-        jsonText = jsonText.trim();
-        
-        // If the JSON doesn't start with {, try to find the first { and extract from there
-        if (!jsonText.startsWith('{')) {
-          const startIndex = jsonText.indexOf('{');
-          if (startIndex >= 0) {
-            jsonText = jsonText.substring(startIndex);
-          }
-        }
-        
-        // If the JSON doesn't end with }, try to find the last } and extract up to there
-        if (!jsonText.endsWith('}')) {
-          const endIndex = jsonText.lastIndexOf('}');
-          if (endIndex >= 0) {
-            jsonText = jsonText.substring(0, endIndex + 1);
-          }
-        }
-        
-        try {
-          extractedData = JSON.parse(jsonText);
-          
-          // Validate the extracted data has the required structure
-          if (!extractedData.documentData || !Array.isArray(extractedData.documentData) || 
-              !extractedData.documentTypes || !Array.isArray(extractedData.documentTypes) ||
-              !extractedData.extractedFields || typeof extractedData.extractedFields !== 'object') {
-            throw new Error('Extracted JSON does not have the required structure');
-          }
-        } catch (parseError) {
-          console.error('JSON parse error:', parseError, 'for text:', jsonText);
-          throw new Error(`Failed to parse JSON: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`);
-        }
-      }
-      
-      // Calculate token usage cost
-      const tokenUsage = {
-        input: extractionResponse.usage?.input_tokens || 0,
-        output: extractionResponse.usage?.output_tokens || 0,
-        cost: (
-          ((extractionResponse.usage?.input_tokens || 0) / 1000000) * MODELS.EXTRACTION.costPerInputMToken +
-          ((extractionResponse.usage?.output_tokens || 0) / 1000000) * MODELS.EXTRACTION.costPerOutputMToken
-        )
+        ]
       };
+      
+      // Call Claude API for extraction
+      console.log(`Calling Claude API (${MODELS.EXTRACTION.name}) for document extraction...`);
+      const extractionResponse = await this.callClaudeApi(apiParams);
+      console.log(`Received response from Claude API, processing results...`);
+      
+      // Parse the extraction result
+      const extractionText = extractionResponse.content?.[0]?.text || '';
+      
+      // Log a preview of the response for debugging
+      console.log(`Claude extraction response preview: ${extractionText.substring(0, 200)}...`);
+      
+      try {
+        // Try to parse the JSON response
+        const jsonMatch = extractionText.match(/```json\n([\s\S]*?)\n```/) || 
+                         extractionText.match(/```\n([\s\S]*?)\n```/) ||
+                         extractionText.match(/```javascript\n([\s\S]*?)\n```/) ||
+                         extractionText.match(/```js\n([\s\S]*?)\n```/) ||
+                         extractionText.match(/\{[\s\S]*?"documentData"[\s\S]*?"documentTypes"[\s\S]*?"extractedFields"[\s\S]*?\}/);
+        
+        if (jsonMatch) {
+          // Clean up the JSON string
+          let jsonStr = jsonMatch[1] || jsonMatch[0];
+          
+          // Remove any trailing or leading backticks or whitespace
+          jsonStr = jsonStr.trim();
+          if (jsonStr.startsWith('```')) {
+            jsonStr = jsonStr.substring(3);
+          }
+          if (jsonStr.endsWith('```')) {
+            jsonStr = jsonStr.substring(0, jsonStr.length - 3);
+          }
+          
+          // Ensure we have a valid JSON object
+          if (!jsonStr.startsWith('{')) {
+            const startIndex = jsonStr.indexOf('{');
+            if (startIndex >= 0) {
+              jsonStr = jsonStr.substring(startIndex);
+            }
+          }
+          
+          // Ensure the JSON ends properly
+          if (!jsonStr.endsWith('}')) {
+            const endIndex = jsonStr.lastIndexOf('}');
+            if (endIndex >= 0) {
+              jsonStr = jsonStr.substring(0, endIndex + 1);
+            }
+          }
+          
+          console.log('Attempting to parse JSON:', jsonStr.substring(0, 100) + '...');
+          
+          const extractedData = JSON.parse(jsonStr);
+          
+          // Calculate token usage cost with prompt caching
+          const tokenUsage = this.calculateTokenUsageCost(extractionResponse.usage, MODELS.EXTRACTION);
+          
+          return {
+            documentData: extractedData.documentData || [],
+            documentTypes: extractedData.documentTypes || [],
+            extractedFields: extractedData.extractedFields || {},
+            rawText: extractionText,
+            tokenUsage
+          };
+        } else {
+          // If no JSON pattern was found, try to create a structured response from the text
+          console.log('No JSON pattern found in Claude response. Attempting to create structured data from text.');
+          
+          // Create a fallback structure based on the documents
+          const documentData = documents.map((doc, index) => ({
+            documentIndex: index + 1,
+            documentType: this.guessDocumentType(doc.name),
+            fields: {
+              'File Name': doc.name,
+              'Content': extractionText.includes(doc.name) ? 
+                'Document was processed but structured data could not be extracted' : 
+                'Document may not have been properly processed'
+            }
+          }));
+          
+          const documentTypes = documentData.map(doc => doc.documentType);
+          
+          // Calculate token usage cost with prompt caching
+          const tokenUsage = this.calculateTokenUsageCost(extractionResponse.usage, MODELS.EXTRACTION);
+          
+          return {
+            documentData,
+            documentTypes,
+            extractedFields: { 'File Name': documents.map(doc => doc.name) },
+            rawText: extractionText,
+            tokenUsage
+          };
+        }
+      } catch (jsonError) {
+        console.error('Error parsing extraction JSON:', jsonError);
+        
+        // Fallback to document type guessing if JSON parsing fails
+        const documentData = documents.map((doc, index) => ({
+          documentIndex: index + 1,
+          documentType: this.guessDocumentType(doc.name),
+          fields: {
+            'File Name': doc.name,
+            'Error': 'Failed to extract structured data from document'
+          }
+        }));
+        
+        const documentTypes = documentData.map(doc => doc.documentType);
+        
+        // Calculate token usage cost with prompt caching
+        const tokenUsage = this.calculateTokenUsageCost(extractionResponse.usage, MODELS.EXTRACTION);
+        
+        return {
+          documentData,
+          documentTypes,
+          extractedFields: { 'File Name': documents.map(doc => doc.name) },
+          rawText: extractionText,
+          tokenUsage
+        };
+      }
+    } catch (error) {
+      console.error('Error in extraction stage:', error);
+      
+      // Fallback to document type guessing if API call fails
+      const documentData = documents.map((doc, index) => ({
+        documentIndex: index + 1,
+        documentType: this.guessDocumentType(doc.name),
+        fields: {
+          'File Name': doc.name,
+          'Error': `API call failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+        }
+      }));
+      
+      const documentTypes = documentData.map(doc => doc.documentType);
+      
+      // Calculate token usage cost with prompt caching
+      const tokenUsage = this.calculateTokenUsageCost({}, MODELS.EXTRACTION);
       
       return {
-        ...extractedData,
-        rawText: contentText,
+        documentData,
+        documentTypes,
+        extractedFields: { 'File Name': documents.map(doc => doc.name) },
+        rawText: `Extraction failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
         tokenUsage
       };
-    } catch (error) {
-      console.error('Error parsing extraction result:', error);
-      throw new Error(`Failed to parse extraction result: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
   
@@ -409,9 +442,9 @@ IMPORTANT:
    * Stage 2: Analyze extracted data
    */
   private async analyzeExtractedData(
-    documentData: Record<string, any>[],
+    documentData: any[],
     documentTypes: string[],
-    extractedFields: Record<string, string[]>,
+    extractedFields: Record<string, any[]>,
     comparisonType: string
   ): Promise<AnalysisResult> {
     // Get specialized instructions for the comparison type
@@ -419,12 +452,12 @@ IMPORTANT:
     
     // Create analysis prompt
     const analysisPrompt = `
-You are a document analysis specialist. Your task is to analyze the extracted data from multiple documents and create a structured comparison.
+You are a document analysis specialist. Your task is to analyze the extracted data from multiple logistics documents and create a structured comparison.
 
 I'll provide you with pre-extracted data from the documents. Your job is to:
-1. Create a structured comparison table showing key fields across all documents
+1. Create detailed comparison tables showing key fields across all documents
 2. Identify discrepancies and inconsistencies between documents
-3. Provide analysis in the required sections (verification, validation, review, etc.)
+3. Provide thorough analysis in the required sections
 
 CRITICAL INSTRUCTION: ONLY use the data provided. Do NOT generate fictional data or make assumptions about missing information.
 
@@ -439,46 +472,57 @@ ${Object.entries(extractedFields).map(([field, values]) => `- ${field}: ${values
 ${typeInstructions}
 
 Format your response with these sections:
-1. Comparison Tables: Create markdown tables comparing key fields across documents
-2. Verification: Quote relevant data and analyze document authenticity
-3. Validation: Quote relevant data and validate consistency
-4. Review: Quote relevant data and review completeness
-5. Analysis: Quote relevant data and provide deeper analysis
-6. Summary: Quote relevant data and summarize key findings
-7. Insights: Quote relevant data and offer insights
-8. Recommendations: Quote relevant data and recommend actions
-9. Risks: Quote relevant data and identify potential risks
-10. Issues: Quote relevant data and list specific issues
 
-For each section, use this format:
-### Section Name
-<quotes>
-Direct quotes from the extracted data
-</quotes>
+## Comparison Tables
+Create multiple detailed markdown tables comparing key fields across documents. Each table should focus on a specific category:
 
-<analysis>
-Your analysis based only on the quoted data
-</analysis>
+1. First create a "Document Overview" table with basic document information
+2. Then create a "Party Information" table comparing shipper/consignee details
+3. Then create a "Shipment Details" table comparing weights, quantities, etc.
+4. Then create a "Payment and Delivery" table comparing terms and conditions
 
-IMPORTANT: 
-- Only reference information that exists in the extracted data
-- For missing information, use "No data available"
-- Be specific about discrepancies between documents
-- Format all sections consistently
+Use this markdown format for tables:
+| Field | Document 1 | Document 2 | Document 3 |
+|-------|------------|------------|------------|
+| Field Name | Value | Value | Value |
+
+## Analysis
+Provide a thorough analysis of the documents, highlighting:
+- Key similarities and differences
+- Important discrepancies that require attention
+- Relationships between the documents
+- Completeness of information across documents
+
+## Summary
+Summarize the key findings from your analysis, focusing on:
+- The overall consistency between documents
+- Critical information present or missing
+- Important observations for logistics processing
+
+## Insights
+Offer valuable insights based on the document comparison, such as:
+- Patterns or issues identified
+- Potential implications for logistics operations
+- Suggestions for improving document consistency
+
+## Issues
+List specific issues or discrepancies found between the documents that require attention.
+
+IMPORTANT: Make your analysis detailed, accurate, and focused on logistics document comparison. Structure your response clearly with proper markdown formatting.
 `;
 
     // Call Claude API for analysis
     const analysisResponse = await this.callClaudeApi({
       model: MODELS.ANALYSIS.name,
       max_tokens: MODELS.ANALYSIS.maxTokens,
-      temperature: MODELS.ANALYSIS.temperature,
       messages: [
         {
           role: 'user',
           content: [
             {
               type: 'text',
-              text: analysisPrompt
+              text: analysisPrompt,
+              cache_control: { type: 'ephemeral' } // Enable prompt caching for analysis prompt
             }
           ]
         }
@@ -492,18 +536,12 @@ IMPORTANT:
       // Parse the result into a structured format
       const comparisonResult = this.processClaudeResponse(contentText);
       
-      // Calculate token usage cost
-      const tokenUsage = {
-        input: analysisResponse.usage?.input_tokens || 0,
-        output: analysisResponse.usage?.output_tokens || 0,
-        cost: (
-          ((analysisResponse.usage?.input_tokens || 0) / 1000000) * MODELS.ANALYSIS.costPerInputMToken +
-          ((analysisResponse.usage?.output_tokens || 0) / 1000000) * MODELS.ANALYSIS.costPerOutputMToken
-        )
-      };
+      // Calculate token usage cost with prompt caching
+      const tokenUsage = this.calculateTokenUsageCost(analysisResponse.usage, MODELS.ANALYSIS);
       
       return {
         comparisonResult,
+        rawText: contentText,
         tokenUsage
       };
     } catch (error) {
@@ -513,205 +551,242 @@ IMPORTANT:
   }
   
   /**
-   * Stage 3: Validate analysis with extended thinking
+   * Stage 3: Validate the analysis with extended thinking
    */
-  private async validateAnalysis(
+  private async validateAnalysisWithExtendedThinking(
+    documents: ParsedDocument[],
     extractionResult: ExtractionResult,
-    analysisResult: ComparisonResult,
-    comparisonType: string,
-    showThinking: boolean = false,
-    useExtendedOutput: boolean = false
+    analysisResult: AnalysisResult
   ): Promise<ValidationResult> {
-    // Format the analysis result for validation
-    const formattedAnalysis = this.formatComparisonResultForValidation(analysisResult);
+    console.log('🔍 Stage 3: Validating analysis with extended thinking');
     
-    // Create validation prompt
-    const validationPrompt = `
-You are an expert document validator with deep experience in logistics and shipping documents. Your task is to validate the analysis of multiple documents and ensure it is accurate, thorough, and grounded in the actual document content.
-
-Please think deeply and thoroughly about this task. Consider multiple approaches and show your complete reasoning. Be meticulous in your validation process.
-
-I'll provide you with:
-1. The original extracted data from the documents
-2. An initial analysis of this data
-
-Your job is to:
-1. Verify that the analysis is ONLY based on information actually present in the documents
-2. Identify and correct any fictional data, assumptions, or hallucinations
-3. Ensure all comparisons are accurate and well-supported
-4. Enhance the analysis with deeper insights where appropriate
-5. Validate that all sections are thorough and accurate
-
-CRITICAL INSTRUCTION: Your validation must ensure that ONLY information actually present in the documents is referenced. Remove any fictional data, company names, or assumptions not supported by the documents.
-
-Here is the original extracted data:
-${JSON.stringify(extractionResult.documentData, null, 2)}
-
-Document types: ${extractionResult.documentTypes.join(', ')}
-
-Here is the initial analysis that needs validation:
-${formattedAnalysis}
-
-As you validate this analysis, please:
-1. Check each fact against the original document data
-2. Verify all quoted content is accurate
-3. Identify any discrepancies between documents that were missed
-4. Ensure the analysis is comprehensive and covers all key logistics fields
-5. Focus especially on critical shipping information like dates, quantities, prices, and party details
-6. Before finalizing your response, verify your work by checking that you haven't introduced any information not present in the original data
-
-Return the validated and improved analysis in the same format, maintaining all sections.
-
-IMPORTANT: 
-- Be thorough and meticulous in your validation
-- Only reference information that exists in the extracted data
-- For missing information, use "No data available"
-- Be specific about discrepancies between documents
-- Format all sections consistently
-`;
+    // Prepare content blocks for the validation stage
+    const contentBlocks: ContentBlock[] = [];
     
-    // Prepare API call parameters with error handling
-    try {
-      const apiParams: any = {
-        model: MODELS.VALIDATION.name,
-        max_tokens: MODELS.VALIDATION.maxTokens,
-        temperature: 1.0, // Must be exactly 1.0 when using thinking
-        messages: [
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'text',
-                text: validationPrompt
-              }
-            ]
-          }
-        ]
-      };
-      
-      // Add extended thinking if requested
-      if (showThinking) {
-        apiParams.thinking = {
-          type: "enabled",
-          budget_tokens: MODELS.VALIDATION.thinkingBudget
-        };
-        
-        // Ensure max_tokens is greater than thinking budget
-        if (apiParams.max_tokens <= MODELS.VALIDATION.thinkingBudget) {
-          apiParams.max_tokens = MODELS.VALIDATION.thinkingBudget + 8000;
+    // Add the document content blocks
+    documents.forEach((doc, index) => {
+      if (doc.type === 'application/pdf' && doc.base64Data) {
+        // Add PDF as document content block with prompt caching
+        contentBlocks.push({
+          type: 'document',
+          source: {
+            type: 'base64',
+            media_type: 'application/pdf',
+            data: doc.base64Data.replace(/^data:application\/pdf;base64,/, '')
+          },
+          cache_control: { type: 'ephemeral' } // Enable prompt caching for PDF documents
+        });
+      } else if (doc.content) {
+        // Add text content block for non-PDF documents
+        contentBlocks.push({
+          type: 'text',
+          text: `Document ${index + 1}: ${doc.name}\n\n${doc.content}`,
+          cache_control: { type: 'ephemeral' } // Enable prompt caching for text documents
+        });
+      }
+    });
+    
+    // Add the extraction result as a content block
+    contentBlocks.push({
+      type: 'text',
+      text: `Extracted Document Data:\n${JSON.stringify(extractionResult.documentData, null, 2)}`,
+      cache_control: { type: 'ephemeral' } // Enable prompt caching for extraction result
+    });
+    
+    // Add the analysis result as a content block
+    contentBlocks.push({
+      type: 'text',
+      text: `Analysis Result:\n${JSON.stringify(analysisResult.comparisonResult, null, 2)}`,
+      cache_control: { type: 'ephemeral' } // Enable prompt caching for analysis result
+    });
+    
+    // Add the validation instructions as the final text block
+    contentBlocks.push({
+      type: 'text',
+      text: `
+You are a document validation specialist for TSV Global, a logistics company. Your task is to validate the extracted data and analysis for the provided logistics documents.
+
+TASK:
+1. Carefully review the original documents
+2. Validate the extracted data for accuracy and completeness
+3. Validate the analysis for correctness and insights
+4. Identify any discrepancies, errors, or missing information
+5. Provide a confidence score for the overall validation (0-100%)
+
+IMPORTANT: Structure your response as follows:
+
+1. THINKING PROCESS:
+   - Document your step-by-step validation process
+   - Note any discrepancies between the original documents and the extracted data
+   - Identify any errors or omissions in the analysis
+   - Explain your reasoning for each validation point
+
+2. FINAL VALIDATION RESULTS:
+   - Provide a clear, concise summary of your validation
+   - Format your findings in a well-structured markdown table
+   - Include a confidence score (0-100%)
+   - List any corrections needed
+
+Focus on the following key logistics fields:
+- Consignee and Shipper information
+- Document numbers and dates
+- Item descriptions and quantities
+- Weights and measurements
+- Delivery terms and payment terms
+- Container/shipment details
+- Origin and destination information
+
+Your validation is critical for ensuring accurate logistics processing and compliance.
+`,
+      cache_control: { type: 'ephemeral' } // Enable prompt caching for validation instructions
+    });
+    
+    // Configure API parameters for validation stage
+    const apiParams: CreateMessageParams = {
+      model: MODELS.VALIDATION.name,
+      max_tokens: MODELS.VALIDATION.maxTokens,
+      messages: [
+        {
+          role: 'user',
+          content: contentBlocks
         }
+      ],
+      // Enable extended thinking for the validation stage
+      thinking: {
+        type: 'enabled',
+        budget_tokens: 32000
       }
-      
-      // Add extended output if requested - without using unsupported betas parameter
-      if (useExtendedOutput) {
-        // Increase max tokens for extended output, but stay within model limits
-        // Claude 3.7 Sonnet supports up to 64,000 tokens
-        apiParams.max_tokens = Math.min(64000, Math.max(apiParams.max_tokens, MODELS.VALIDATION.thinkingBudget + 8000));
-      }
-      
-      // Call Claude API for validation with retry mechanism
-      let retryCount = 0;
-      const maxRetries = 3;
-      let validationResponse = null;
-      
-      while (retryCount < maxRetries) {
-        try {
-          validationResponse = await this.callClaudeApi(apiParams);
-          break; // Success, exit retry loop
-        } catch (error) {
-          retryCount++;
-          console.error(`Validation API call failed (attempt ${retryCount}/${maxRetries}):`, error);
-          
-          if (retryCount >= maxRetries) {
-            throw error; // Re-throw if all retries failed
-          }
-          
-          // Wait before retrying (exponential backoff)
-          const waitTime = Math.min(2000 * Math.pow(2, retryCount - 1), 10000);
-          await new Promise(resolve => setTimeout(resolve, waitTime));
-        }
-      }
-      
-      if (!validationResponse) {
-        throw new Error('Failed to get validation response after retries');
-      }
-      
-      // Process the validation result
-      const contentText = validationResponse.content?.[0]?.text || '';
-      let thinkingProcess = null;
-      
-      // Extract thinking process if available
-      const thinkingBlock = validationResponse.content?.find(block => block.type === 'thinking');
-      if (thinkingBlock && showThinking) {
-        thinkingProcess = thinkingBlock.thinking;
-      }
-      
-      // Parse the result into a structured format
-      const validatedResult = this.processClaudeResponse(contentText);
-      
-      // Calculate token usage cost
-      const tokenUsage = {
-        input: validationResponse.usage?.input_tokens || 0,
-        output: validationResponse.usage?.output_tokens || 0,
-        cost: (
-          ((validationResponse.usage?.input_tokens || 0) / 1000000) * MODELS.VALIDATION.costPerInputMToken +
-          ((validationResponse.usage?.output_tokens || 0) / 1000000) * MODELS.VALIDATION.costPerOutputMToken
-        )
-      };
-      
-      // Calculate confidence score
-      const confidence = this.calculateConfidenceScore(validatedResult, extractionResult);
-      
-      return {
-        validatedResult,
-        confidence,
-        thinkingProcess,
-        tokenUsage
-      };
-    } catch (error) {
-      console.error('Error in validation stage:', error);
-      
-      // Provide a fallback result with error information
-      return {
-        validatedResult: {
-          ...analysisResult,
-          validation: `<quotes></quotes>\n\n<analysis>Validation failed: ${error instanceof Error ? error.message : 'Unknown error'}</analysis>`,
-          issues: `<quotes></quotes>\n\n<analysis>Validation process encountered an error. Using unvalidated analysis results.</analysis>`
-        },
-        confidence: 0.3, // Low confidence due to validation failure
-        thinkingProcess: null,
-        tokenUsage: {
-          input: 0,
-          output: 0,
-          cost: 0
-        }
-      };
+    };
+    
+    // Call Claude API for validation
+    console.log(`Calling Claude API (${MODELS.VALIDATION.name}) for validation with extended thinking...`);
+    const validationResponse = await this.callClaudeApi(apiParams);
+    console.log(`Received response from Claude API, processing validation results...`);
+    
+    // Process the validation result
+    const validationText = validationResponse.content?.[0]?.text || '';
+    
+    // Extract thinking process and final results
+    let thinkingProcess = '';
+    let finalResults = '';
+    
+    // Check if the response has thinking blocks
+    const thinkingBlocks = validationResponse.content?.filter(block => block.type === 'thinking');
+    if (thinkingBlocks && thinkingBlocks.length > 0) {
+      thinkingProcess = thinkingBlocks[0].thinking || '';
     }
+    
+    // Get the final text blocks
+    const textBlocks = validationResponse.content?.filter(block => block.type === 'text');
+    if (textBlocks && textBlocks.length > 0) {
+      finalResults = textBlocks[0].text || '';
+    }
+    
+    // If there are no explicit thinking blocks, try to extract thinking from the text
+    if (!thinkingProcess && validationText) {
+      const thinkingMatch = validationText.match(/THINKING PROCESS:[\s\S]*?(?=FINAL VALIDATION RESULTS:|$)/i);
+      const resultsMatch = validationText.match(/FINAL VALIDATION RESULTS:[\s\S]*/i);
+      
+      if (thinkingMatch) {
+        thinkingProcess = thinkingMatch[0].replace(/THINKING PROCESS:/i, '').trim();
+      }
+      
+      if (resultsMatch) {
+        finalResults = resultsMatch[0].replace(/FINAL VALIDATION RESULTS:/i, '').trim();
+      } else {
+        finalResults = validationText;
+      }
+    }
+    
+    // Process the final results to extract tables
+    const tables = this.processClaudeResponse(finalResults);
+    
+    // Calculate token usage cost with prompt caching
+    const tokenUsage = this.calculateTokenUsageCost(validationResponse.usage, MODELS.VALIDATION);
+    
+    // Extract confidence score from the validation text
+    const confidenceMatch = finalResults.match(/confidence\s+score:?\s*(\d+)%/i) || 
+                           finalResults.match(/confidence:?\s*(\d+)%/i) ||
+                           finalResults.match(/score:?\s*(\d+)%/i);
+    
+    const confidenceScore = confidenceMatch ? parseInt(confidenceMatch[1], 10) : 0;
+    
+    return {
+      isValid: confidenceScore >= 70,
+      confidenceScore,
+      thinkingProcess,
+      finalResults,
+      tables,
+      rawText: validationText,
+      tokenUsage
+    };
   }
   
   /**
    * Call the Claude API via proxy
    */
-  private async callClaudeApi(payload: any): Promise<any> {
+  private async callClaudeApi(payload: CreateMessageParams): Promise<any> {
     try {
-      const response = await fetch(this.proxyUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload)
-      });
+      const response = await axios.post(this.proxyUrl, payload);
       
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Claude API HTTP error: ${response.status} ${response.statusText} - ${errorText}`);
+      if (!response.data.success) {
+        const errorText = response.data.error || 'Unknown error';
+        throw new Error(`Claude API error: ${errorText}`);
       }
       
-      return await response.json();
+      // Log cache usage metrics if available
+      if (response.data.result.usage) {
+        const usage = response.data.result.usage;
+        if (usage.cache_creation_input_tokens) {
+          console.log(`📊 Cache metrics - Cache creation: ${usage.cache_creation_input_tokens} tokens`);
+        }
+        if (usage.cache_read_input_tokens) {
+          console.log(`📊 Cache metrics - Cache read: ${usage.cache_read_input_tokens} tokens (90% cost savings)`);
+        }
+        console.log(`📊 Regular input tokens: ${usage.input_tokens}, Output tokens: ${usage.output_tokens}`);
+      }
+      
+      return response.data.result;
     } catch (error) {
       console.error('Error calling Claude API:', error);
       throw new Error(`Failed to call Claude API: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
+  }
+  
+  /**
+   * Calculate token usage cost with prompt caching
+   */
+  private calculateTokenUsageCost(usage: any, model: ModelConfig): { input: number; output: number; cost: number; cacheSavings?: number } {
+    // Extract token usage metrics
+    const inputTokens = usage?.input_tokens || 0;
+    const outputTokens = usage?.output_tokens || 0;
+    const cacheCreationTokens = usage?.cache_creation_input_tokens || 0;
+    const cacheReadTokens = usage?.cache_read_input_tokens || 0;
+    
+    // Calculate costs with prompt caching
+    const inputCost = (inputTokens / 1000000) * model.costPerInputMToken;
+    const outputCost = (outputTokens / 1000000) * model.costPerOutputMToken;
+    
+    // Cache write costs are 25% more expensive than base input tokens
+    const cacheWriteCost = (cacheCreationTokens / 1000000) * (model.costPerInputMToken * 1.25);
+    
+    // Cache read costs are 90% cheaper than base input tokens
+    const cacheReadCost = (cacheReadTokens / 1000000) * (model.costPerInputMToken * 0.1);
+    
+    // Calculate cost savings from cache reads
+    const potentialCost = (cacheReadTokens / 1000000) * model.costPerInputMToken;
+    const actualCost = cacheReadCost;
+    const cacheSavings = potentialCost - actualCost;
+    
+    // Total cost
+    const totalCost = inputCost + outputCost + cacheWriteCost + cacheReadCost;
+    
+    return {
+      input: inputTokens + cacheCreationTokens + cacheReadTokens,
+      output: outputTokens,
+      cost: totalCost,
+      cacheSavings: cacheSavings
+    };
   }
   
   /**
@@ -723,73 +798,55 @@ IMPORTANT:
       tables: [],
     };
     
-    // Extract tables from markdown
-    const tableMatches = text.match(/\n\|[^\n]+\|[^\n]+\n\|[\s-:]+\|/g);
+    // Extract tables from markdown - look for markdown table patterns
+    const markdownTableRegex = /\|[\s\S]+?\|[\s\S]+?\|[\s-:]+\|[\s\S]+?\|/g;
+    const tableMatches = text.match(markdownTableRegex);
+    
     if (tableMatches) {
       tableMatches.forEach(tableMatch => {
+        // Find the table's title (heading before the table)
         const tableStartIndex = text.indexOf(tableMatch);
-        let tableEndIndex = text.indexOf('\n\n', tableStartIndex + tableMatch.length);
-        if (tableEndIndex === -1) tableEndIndex = text.length;
+        let titleText = 'Comparison Table';
         
-        const tableText = text.substring(tableStartIndex, tableEndIndex);
-        const parsedTable = this.parseMarkdownTable(tableText);
+        // Look for a heading before the table
+        const headingRegex = /##\s+([^\n]+)/g;
+        let headingMatch;
+        let closestHeadingIndex = -1;
         
-        // Find table title (heading before the table)
-        let titleStartIndex = text.lastIndexOf('\n##', tableStartIndex);
-        if (titleStartIndex === -1) titleStartIndex = text.lastIndexOf('\n#', tableStartIndex);
-        
-        if (titleStartIndex !== -1) {
-          const titleEndIndex = text.indexOf('\n', titleStartIndex + 1);
-          if (titleEndIndex !== -1 && titleEndIndex < tableStartIndex) {
-            const titleText = text.substring(titleStartIndex, titleEndIndex).trim().replace(/^#+\s+/, '');
-            parsedTable.title = titleText;
+        while ((headingMatch = headingRegex.exec(text)) !== null) {
+          const headingIndex = headingMatch.index;
+          if (headingIndex < tableStartIndex && headingIndex > closestHeadingIndex) {
+            closestHeadingIndex = headingIndex;
+            titleText = headingMatch[1].trim();
           }
         }
         
-        if (!parsedTable.title) {
-          parsedTable.title = 'Comparison Table';
-        }
+        // Parse the table
+        const parsedTable = this.parseMarkdownTable(tableMatch);
+        parsedTable.title = titleText;
         
+        // Add the table to the result
         result.tables.push(parsedTable);
       });
     }
     
-    // Extract analysis sections using XML tags if present
-    const extractXmlContent = (tag: string): string | undefined => {
-      const regex = new RegExp(`<${tag}>(.*?)</${tag}>`, 's');
-      const match = text.match(regex);
-      return match ? match[1].trim() : undefined;
-    };
-    
-    // Extract analysis sections using markdown headings if no XML tags
+    // Extract analysis sections using markdown headings
     const extractHeadingContent = (heading: string): string | undefined => {
-      const headingRegex = new RegExp(`##\\s+${heading}\\s*\n(.*?)(?=\n##\\s+|$)`, 's');
+      const headingRegex = new RegExp(`##\\s+${heading}\\s*\n([\\s\\S]*?)(?=\n##\\s+|$)`, 'i');
       const match = text.match(headingRegex);
       return match ? match[1].trim() : undefined;
     };
     
-    // Try to extract content using both methods and use whichever works
-    const extractSection = (section: string, tag?: string): string | undefined => {
-      const xmlContent = tag ? extractXmlContent(tag) : undefined;
-      const headingContent = extractHeadingContent(section);
-      
-      return xmlContent || headingContent;
-    };
-    
-    // Extract quotes and analysis from XML tags
-    const quotesMatch = text.match(/<quotes>(.*?)<\/quotes>/s);
-    const analysisMatch = text.match(/<analysis>(.*?)<\/analysis>/s);
-    
     // Extract various sections
-    result.verification = extractSection('Verification', 'verification');
-    result.validation = extractSection('Validation', 'validation');
-    result.review = extractSection('Review', 'review');
-    result.analysis = analysisMatch ? analysisMatch[1].trim() : extractSection('Analysis', 'analysis');
-    result.summary = extractSection('Summary', 'summary');
-    result.insights = extractSection('Insights', 'insights');
-    result.recommendations = extractSection('Recommendations', 'recommendations');
-    result.risks = extractSection('Risks', 'risks');
-    result.issues = extractSection('Issues', 'issues');
+    result.analysis = extractHeadingContent('Analysis');
+    result.summary = extractHeadingContent('Summary');
+    result.insights = extractHeadingContent('Insights');
+    result.issues = extractHeadingContent('Issues');
+    result.recommendations = extractHeadingContent('Recommendations');
+    result.risks = extractHeadingContent('Risks');
+    result.verification = extractHeadingContent('Verification');
+    result.validation = extractHeadingContent('Validation');
+    result.review = extractHeadingContent('Review');
     
     // If we have Claude's thinking process, add it as a special section
     if (text.includes("Let me analyze what I'm being asked to do here") || 
@@ -806,119 +863,66 @@ IMPORTANT:
   }
   
   /**
-   * Parse a markdown table string into a structured ComparisonTable object
+   * Parse a markdown table into a structured format
    */
-  private parseMarkdownTable(tableText: string): ComparisonTable | null {
+  private parseMarkdownTable(tableText: string): ComparisonTable {
     try {
-      // Split the table into rows
-      const rows = tableText.trim().split('\n');
-      if (rows.length < 3) return null; // Need at least header, separator, and one data row
+      // Split the table into lines
+      const lines = tableText.trim().split('\n');
       
-      // Extract headers
-      const headerRow = rows[0];
-      const headers = headerRow
+      // Need at least 3 lines for a valid table (header, separator, and at least one data row)
+      if (lines.length < 3) {
+        return {
+          title: 'Empty Table',
+          headers: ['No Data'],
+          rows: [['No data available']]
+        };
+      }
+      
+      // Extract headers (first line)
+      const headerLine = lines[0].trim();
+      const headers = headerLine
         .split('|')
-        .filter(cell => cell.trim() !== '')
-        .map(cell => cell.trim());
+        .map(header => header.trim())
+        .filter(header => header !== '');
       
-      // Skip the separator row (row[1])
+      // Skip the separator line (second line)
       
-      // Extract data rows
-      const dataRows = rows.slice(2).map(row => {
-        return row
+      // Extract rows (remaining lines)
+      const rows = lines.slice(2).map(line => {
+        const rowCells = line
           .split('|')
-          .filter(cell => cell.trim() !== '')
-          .map(cell => cell.trim());
-      });
+          .map(cell => cell.trim())
+          .filter(cell => cell !== '');
+        
+        // Ensure consistent number of cells in each row
+        while (rowCells.length < headers.length) {
+          rowCells.push('');
+        }
+        
+        return rowCells;
+      }).filter(row => row.length > 0); // Skip empty rows
       
-      // Generate a title based on the first header or use a default title
-      const title = headers[0] ? `Comparison of ${headers[0]}` : 'Document Comparison';
+      // Create a title based on the first header if no title is provided
+      const title = headers.length > 0 ? headers[0] : 'Comparison Table';
       
       return {
         title,
         headers,
-        rows: dataRows
+        rows
       };
     } catch (error) {
       console.error('Error parsing markdown table:', error);
-      return null;
-    }
-  }
-  
-  /**
-   * Format ComparisonResult for validation
-   */
-  private formatComparisonResultForValidation(result: ComparisonResult): string {
-    let formatted = '';
-    
-    // Format tables
-    if (result.tables && result.tables.length > 0) {
-      formatted += '## Comparison Tables\n\n';
       
-      result.tables.forEach((table, index) => {
-        // Create header row
-        let tableText = '| ' + table.headers.join(' | ') + ' |\n';
-        
-        // Create separator row
-        tableText += '| ' + table.headers.map(() => '---').join(' | ') + ' |\n';
-        
-        // Create data rows
-        table.rows.forEach(row => {
-          tableText += '| ' + row.join(' | ') + ' |\n';
-        });
-        
-        formatted += tableText + '\n\n';
-      });
+      // Return a minimal valid table to avoid breaking the UI
+      return {
+        title: 'Error Parsing Table',
+        headers: ['Error'],
+        rows: [['Error parsing table data']]
+      };
     }
-    
-    // Format sections
-    const sectionNames = ['verification', 'validation', 'review', 'analysis', 'summary', 
-                         'insights', 'recommendations', 'risks', 'issues'];
-    
-    sectionNames.forEach(name => {
-      if (result[name]) {
-        formatted += `### ${name.charAt(0).toUpperCase() + name.slice(1)}\n`;
-        formatted += result[name] + '\n\n';
-      }
-    });
-    
-    return formatted;
   }
   
-  /**
-   * Calculate confidence score based on validation result
-   */
-  private calculateConfidenceScore(
-    validatedResult: ComparisonResult, 
-    extractionResult: ExtractionResult
-  ): number {
-    // Simple heuristic for confidence score
-    let score = 0.5; // Start with neutral score
-    
-    // Check if we have tables
-    if (validatedResult.tables && validatedResult.tables.length > 0) {
-      score += 0.1;
-    }
-    
-    // Check if we have analysis sections
-    const sections = ['verification', 'validation', 'review', 'analysis', 'summary', 
-                     'insights', 'recommendations', 'risks', 'issues'];
-    
-    for (const section of sections) {
-      if (validatedResult[section]) {
-        score += 0.05;
-      }
-    }
-    
-    // Check if we found discrepancies
-    if (validatedResult.analysis && validatedResult.analysis.includes('discrep')) {
-      score += 0.1;
-    }
-    
-    // Cap the score at 0.95 - never be 100% confident
-    return Math.min(score, 0.95);
-  }
-
   /**
    * Guess the document type based on the file name
    */

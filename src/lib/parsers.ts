@@ -1,6 +1,6 @@
 // Import with type safety
 import * as XLSX from 'xlsx';
-import { DocumentType, DocumentFile, ParsedDocument } from './types';
+import { ParsedDocument, DocumentFile } from './types';
 
 // Determine document type from file extension
 export const getDocumentType = (file: File): DocumentType => {
@@ -197,56 +197,57 @@ export const resizeImageForClaude = async (file: File): Promise<File> => {
 
 // Parse image file to a format suitable for Claude's vision capabilities
 export const parseImage = async (file: File): Promise<ParsedDocument> => {
-  try {
-    // Optimize image size for Claude
-    const optimizedFile = await resizeImageForClaude(file);
+  // In a real implementation, this would use OCR to extract text from the image
+  // For now, we'll just return placeholder text
+  
+  return {
+    content: `Image file: ${file.name} (OCR not implemented yet)`,
+    name: file.name,
+    file: file,
+    type: 'image',
     
-    // Return the image file for Claude's vision API
-    return {
-      image: optimizedFile,
-      documentType: 'image'
-    };
-  } catch (error) {
-    console.error('Error parsing image:', error);
-    throw new Error('Failed to parse image file');
-  }
+    // For backward compatibility
+    image: file,
+    documentType: 'image' as DocumentType,
+    text: `Image file: ${file.name} (OCR not implemented yet)`
+  };
 };
 
 // Parse PDF file using Claude's document capabilities
 export const parsePDF = async (file: File): Promise<ParsedDocument> => {
   try {
-    // Check file size - Claude has a limit of 32MB for PDFs
-    const MAX_PDF_SIZE = 32 * 1024 * 1024; // 32MB
-    
-    if (file.size > MAX_PDF_SIZE) {
-      console.warn(`PDF file size (${(file.size / (1024 * 1024)).toFixed(2)}MB) exceeds Claude's 32MB limit`);
-      throw new Error(`PDF file is too large (${(file.size / (1024 * 1024)).toFixed(2)}MB). Maximum size is 32MB.`);
-    }
-    
-    // Check if the file is actually a PDF
-    if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
-      throw new Error('Invalid PDF file format');
-    }
-    
-    // Convert PDF to base64
+    // Read the file as an ArrayBuffer
     const arrayBuffer = await file.arrayBuffer();
-    const base64Data = btoa(
-      new Uint8Array(arrayBuffer)
-        .reduce((data, byte) => data + String.fromCharCode(byte), '')
-    );
     
-    console.log(`Successfully encoded PDF: ${file.name} (${(base64Data.length / (1024 * 1024)).toFixed(2)}MB base64 data)`);
+    // Convert ArrayBuffer to Base64
+    const base64Data = arrayBufferToBase64(arrayBuffer);
     
-    // For PDFs, we'll return the file to be processed by Claude's document capabilities
+    // Log success
+    console.log(`Successfully encoded PDF: ${file.name} (${(base64Data.length / 1024).toFixed(2)}KB base64 data)`);
+    
     return {
-      image: file, // We use the image field to store the PDF file
-      documentType: 'pdf',
-      text: `[PDF document: ${file.name}]`,
-      base64Data: base64Data
+      content: `PDF file: ${file.name}`,
+      name: file.name,
+      file: file,
+      base64Data: `data:application/pdf;base64,${base64Data}`,
+      type: 'pdf',
+      
+      // For backward compatibility
+      text: `PDF file: ${file.name}`,
+      documentType: 'pdf' as DocumentType
     };
   } catch (error) {
-    console.error('Error parsing PDF:', error);
-    throw error;
+    console.error('Error encoding PDF:', error);
+    return {
+      content: `PDF file: ${file.name} (Error: ${error instanceof Error ? error.message : 'Unknown error'})`,
+      name: file.name,
+      file: file,
+      type: 'pdf',
+      
+      // For backward compatibility
+      text: `PDF file: ${file.name} (Error: ${error instanceof Error ? error.message : 'Unknown error'})`,
+      documentType: 'pdf' as DocumentType
+    };
   }
 };
 
@@ -281,43 +282,117 @@ export const parseTxt = async (file: File): Promise<string> => {
 };
 
 // Main parser function that delegates to the appropriate parser
-export const parseDocument = async (documentFile: DocumentFile): Promise<ParsedDocument> => {
-  const { type, file } = documentFile;
-
+export async function parseDocument(file: DocumentFile): Promise<ParsedDocument> {
+  const fileType = getDocumentType(file.file);
+  
   try {
-    switch (type) {
+    let content = '';
+    let type = '';
+    let base64Data = '';
+    
+    // Parse based on file type
+    switch (fileType) {
       case 'pdf':
-        return await parsePDF(file);
+        const pdfResult = await parsePDF(file.file);
+        content = pdfResult.text;
+        base64Data = pdfResult.base64Data || '';
+        type = detectDocumentType(content, file.file.name);
+        break;
+        
       case 'image':
-        return await parseImage(file);
-      case 'csv': {
-        const text = await parseCSV(file);
-        return { text, documentType: 'csv' };
-      }
-      case 'excel': {
-        const text = await parseExcel(file);
-        return { text, documentType: 'excel' };
-      }
-      case 'doc': {
-        const text = await parseDoc(file);
-        return { text, documentType: 'doc' };
-      }
-      case 'txt': {
-        const text = await parseTxt(file);
-        return { text, documentType: 'txt' };
-      }
+        // For images, we'll use OCR in the future
+        content = `Image file: ${file.file.name}`;
+        type = detectDocumentType(content, file.file.name);
+        break;
+        
+      case 'csv':
+        content = await parseCSV(file.file);
+        type = detectDocumentType(content, file.file.name);
+        break;
+        
+      case 'excel':
+        content = await parseExcel(file.file);
+        type = detectDocumentType(content, file.file.name);
+        break;
+        
+      case 'doc':
+      case 'docx':
+        content = await parseDoc(file.file);
+        type = detectDocumentType(content, file.file.name);
+        break;
+        
+      case 'txt':
       default:
-        // For unknown types, try to read as text
-        console.log(`Unknown file type for ${file.name}, attempting to read as text`);
-        try {
-          const text = await parseTxt(file);
-          return { text, documentType: 'unknown' };
-        } catch (e) {
-          throw new Error(`Unsupported file type: ${type}`);
-        }
+        content = await parseTxt(file.file);
+        type = detectDocumentType(content, file.file.name);
+        break;
     }
+    
+    // For backward compatibility
+    return {
+      content,
+      name: file.file.name,
+      file: file.file,
+      base64Data,
+      type,
+      
+      // Backward compatibility
+      text: content,
+      documentType: type as DocumentType,
+      image: fileType === 'image' ? file.file : undefined
+    };
   } catch (error) {
-    console.error(`Error parsing document ${file.name}:`, error);
-    throw error;
+    console.error(`Error parsing ${file.file.name}:`, error);
+    return {
+      content: `Error parsing file: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      name: file.file.name,
+      file: file.file,
+      type: 'unknown',
+      
+      // Backward compatibility
+      text: `Error parsing file: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      documentType: 'unknown' as DocumentType
+    };
   }
-};
+}
+
+/**
+ * Detect document type based on content and filename
+ */
+function detectDocumentType(content: string, filename: string): string {
+  const lowerContent = content.toLowerCase();
+  const lowerFilename = filename.toLowerCase();
+  
+  // Check filename first
+  if (lowerFilename.includes('invoice')) return 'Invoice';
+  if (lowerFilename.includes('bill of lading') || lowerFilename.includes('bol')) return 'Bill of Lading';
+  if (lowerFilename.includes('packing list')) return 'Packing List';
+  if (lowerFilename.includes('purchase order') || lowerFilename.includes('po')) return 'Purchase Order';
+  
+  // Then check content
+  if (lowerContent.includes('invoice')) return 'Invoice';
+  if (lowerContent.includes('bill of lading') || lowerContent.includes('bol')) return 'Bill of Lading';
+  if (lowerContent.includes('packing list')) return 'Packing List';
+  if (lowerContent.includes('purchase order') || lowerContent.includes('po number')) return 'Purchase Order';
+  
+  // Default to unknown
+  return 'Unknown Document';
+}
+
+// Update DocumentType enum to include all document types
+export type DocumentType = 
+  | 'pdf' 
+  | 'image' 
+  | 'csv' 
+  | 'excel' 
+  | 'doc' 
+  | 'docx' 
+  | 'txt' 
+  | 'unknown';
+
+// Helper function to convert ArrayBuffer to Base64
+function arrayBufferToBase64(arrayBuffer: ArrayBuffer): string {
+  const uint8Array = new Uint8Array(arrayBuffer);
+  const binaryString = uint8Array.reduce((data, byte) => data + String.fromCharCode(byte), '');
+  return btoa(binaryString);
+}

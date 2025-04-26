@@ -1,12 +1,26 @@
 // Document and analysis related types
-export type DocumentType = 'pdf' | 'image' | 'csv' | 'excel' | 'doc' | 'txt' | 'unknown';
+export type DocumentType = 
+  | 'pdf' 
+  | 'image' 
+  | 'csv' 
+  | 'excel' 
+  | 'doc' 
+  | 'docx' 
+  | 'txt' 
+  | 'unknown';
 
 // Interface for parsed document content
 export interface ParsedDocument {
-  image?: File;
+  content: string;
+  name: string;
+  file?: File;
+  base64Data?: string;
+  type?: string;
+  
+  // For backward compatibility
   text?: string;
   documentType?: DocumentType;
-  base64Data?: string; // Base64-encoded data for PDF files
+  image?: File;
 }
 
 export interface DocumentFile {

@@ -1,6 +1,11 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 
 function Header() {
+  // Set document title
+  useEffect(() => {
+    document.title = "DocLens";
+  }, []);
+
   return (
     <header className="bg-gradient-to-r from-blue-600 to-blue-800 text-white p-4 shadow-md">
       <div className="container mx-auto flex flex-col md:flex-row justify-between items-center">
