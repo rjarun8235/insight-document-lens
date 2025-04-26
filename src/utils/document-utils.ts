@@ -8,10 +8,10 @@ import {
   ComparisonResult, 
   ProcessingOptions,
   TokenUsage
-} from '@/types/app-types';
-import { optimizedDocumentService } from '@/services/optimized-document-service';
-import { extractionPrompt } from '@/templates/extraction-prompt';
-import { validationPrompt } from '@/templates/validation-prompt';
+} from '../types/app-types';
+import OptimizedDocumentService from '../services/optimized-document-service';
+import { extractionPrompt } from '../templates/extraction-prompt';
+import { validationPrompt } from '../templates/validation-prompt';
 
 /**
  * Prepare instructions for document processing based on comparison type
@@ -46,31 +46,50 @@ export function prepareInstructions(comparisonType: string): string {
 /**
  * Analyze documents using the optimized document service
  * 
- * @param documents Array of parsed documents to analyze
+ * @param documents Array of document content strings or parsed documents
  * @param instruction Custom instruction for analysis
- * @param useCache Whether to use cached results if available
+ * @param options Processing options like comparison type
  * @returns Analysis result with comparison data and token usage
  */
 export async function analyzeDocuments(
-  documents: ParsedDocument[],
+  documents: string[] | ParsedDocument[],
   instruction: string,
-  useCache: boolean = true
-): Promise<{ 
-  result: ComparisonResult; 
-  tokenUsage: TokenUsage
+  options: ProcessingOptions = {}
+): Promise<{
+  result: ComparisonResult;
+  tokenUsage: TokenUsage;
+  thinkingProcess?: string;
 }> {
-  // Process documents with the optimized document service
-  const processingResult = await optimizedDocumentService.processDocuments(
-    documents,
-    'Logistics Documents',
-    {
-      skipValidation: false
-    }
-  );
-  
-  // Return the result in the expected format
-  return {
-    result: processingResult.result,
-    tokenUsage: processingResult.totalTokenUsage
-  };
+  try {
+    // Convert string content to ParsedDocument objects if needed
+    const parsedDocs: ParsedDocument[] = documents.map((doc, index) => {
+      if (typeof doc === 'string') {
+        return {
+          content: doc,
+          name: `Document ${index + 1}`,
+          type: 'text/plain'
+        };
+      }
+      return doc;
+    });
+    
+    // Create optimized document service instance
+    const documentService = new OptimizedDocumentService();
+    
+    // Process documents with instruction as comparisonType
+    const result = await documentService.processDocuments(parsedDocs, {
+      ...options,
+      comparisonType: instruction
+    });
+    
+    // Return the analysis result
+    return {
+      result: result.result,
+      tokenUsage: result.tokenUsage,
+      thinkingProcess: result.thinkingProcess
+    };
+  } catch (error) {
+    console.error('Error analyzing documents:', error);
+    throw new Error(`Failed to analyze documents: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
 }

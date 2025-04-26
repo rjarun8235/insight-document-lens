@@ -52,10 +52,10 @@ function createDocumentFile(file: File): ExtendedDocumentFile {
 async function analyzeDocumentsWithTypeConversion(
   docs: ParsedDocument[], 
   instructions: string, 
-  isFollowUp: boolean = false
+  options: { isFollowUp: boolean, skipValidation: boolean, comparisonType: string }
 ): Promise<AnalysisResultWithTokens> {
-  // Call the original analyzeDocuments function with type assertion
-  const result = await analyzeDocuments(docs as any, instructions, isFollowUp);
+  // Call the original analyzeDocuments function with proper options
+  const result = await analyzeDocuments(docs as any, instructions, options);
   
   // Return the result in the expected format
   return {
@@ -288,7 +288,11 @@ export function useDocumentProcessor() {
         processingStatus: 'Analyzing documents with Claude AI...'
       }));
 
-      const analysisResults = await analyzeDocumentsWithTypeConversion(validParsedDocuments, instructions, true);
+      const analysisResults = await analyzeDocumentsWithTypeConversion(validParsedDocuments, instructions, {
+        isFollowUp: true,
+        skipValidation: false,
+        comparisonType: 'logistics'
+      });
 
       // Complete
       setState(prev => ({
@@ -431,7 +435,11 @@ export function useDocumentProcessor() {
       const instruction = `Based on the previously analyzed documents, please answer this follow-up question: ${followUpQuestion}`;
 
       // Use the cached documents to answer the follow-up question
-      const followUpResults = await analyzeDocumentsWithTypeConversion(parsedDocuments, instruction, true);
+      const followUpResults = await analyzeDocumentsWithTypeConversion(parsedDocuments, instruction, {
+        isFollowUp: true,
+        skipValidation: false,
+        comparisonType: 'logistics'
+      });
 
       // Update results with the new analysis
       setState(prev => ({ ...prev, results: followUpResults }));

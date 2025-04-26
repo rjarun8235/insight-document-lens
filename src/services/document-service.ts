@@ -6,14 +6,15 @@
 
 import { 
   ParsedDocument, 
-  ComparisonResult,
-  ProcessingOptions,
+  ContentBlock, 
+  ProcessingOptions, 
+  ExtractionResult, 
+  AnalysisResult, 
+  ValidationResult, 
   ProcessingResult,
-  TokenUsage,
-  ContentBlock,
-  ExtractionResult,
-  AnalysisResult,
-  ValidationResult
+  ComparisonResult,
+  ComparisonTable,
+  TokenUsage
 } from '../types/app-types';
 import { ClaudeApiService } from '../api/claude-api';
 import { extractionPrompt } from '../templates/extraction-prompt';
@@ -111,7 +112,7 @@ export class DocumentService {
     return {
       result: finalResult,
       stages,
-      totalTokenUsage
+      tokenUsage: totalTokenUsage
     };
   }
   
@@ -172,7 +173,11 @@ export class DocumentService {
       console.log(`Sending ${contentBlocks.length} content blocks to Claude API`);
       
       // Call Claude API for extraction
-      const extractionResponse = await this.claudeApi.callApi(apiRequest);
+      const extractionResponse = await this.claudeApi.callApi(
+        apiRequest.model,
+        apiRequest.messages,
+        apiRequest.max_tokens
+      );
       
       // Parse the extraction result
       const extractionText = extractionResponse.content?.[0]?.text || '';
@@ -222,7 +227,16 @@ export class DocumentService {
           const extractedData = JSON.parse(jsonStr);
           
           // Calculate token usage cost
-          const tokenUsage = this.claudeApi.calculateTokenUsage(extractionResponse.usage, this.claudeApi.MODELS.EXTRACTION);
+          const tokenUsage: TokenUsage = {
+            input: extractionResponse.usage.input_tokens,
+            output: extractionResponse.usage.output_tokens,
+            cost: this.calculateCost(
+              extractionResponse.usage.input_tokens,
+              extractionResponse.usage.output_tokens,
+              this.claudeApi.MODELS.EXTRACTION
+            ),
+            cacheSavings: this.calculateCacheSavings(extractionResponse.usage)
+          };
           
           return {
             result: extractedData,
@@ -247,7 +261,16 @@ export class DocumentService {
           const documentTypes = documentData.map(doc => doc.documentType);
           
           // Calculate token usage cost
-          const tokenUsage = this.claudeApi.calculateTokenUsage(extractionResponse.usage, this.claudeApi.MODELS.EXTRACTION);
+          const tokenUsage: TokenUsage = {
+            input: extractionResponse.usage.input_tokens,
+            output: extractionResponse.usage.output_tokens,
+            cost: this.calculateCost(
+              extractionResponse.usage.input_tokens,
+              extractionResponse.usage.output_tokens,
+              this.claudeApi.MODELS.EXTRACTION
+            ),
+            cacheSavings: this.calculateCacheSavings(extractionResponse.usage)
+          };
           
           return {
             result: {
@@ -275,7 +298,16 @@ export class DocumentService {
         const documentTypes = documentData.map(doc => doc.documentType);
         
         // Calculate token usage cost
-        const tokenUsage = this.claudeApi.calculateTokenUsage(extractionResponse.usage, this.claudeApi.MODELS.EXTRACTION);
+        const tokenUsage: TokenUsage = {
+          input: extractionResponse.usage.input_tokens,
+          output: extractionResponse.usage.output_tokens,
+          cost: this.calculateCost(
+            extractionResponse.usage.input_tokens,
+            extractionResponse.usage.output_tokens,
+            this.claudeApi.MODELS.EXTRACTION
+          ),
+          cacheSavings: this.calculateCacheSavings(extractionResponse.usage)
+        };
         
         return {
           result: {
@@ -302,7 +334,12 @@ export class DocumentService {
       const documentTypes = documentData.map(doc => doc.documentType);
       
       // Calculate token usage cost with zeros for error case
-      const tokenUsage = this.claudeApi.calculateTokenUsage({}, this.claudeApi.MODELS.EXTRACTION);
+      const tokenUsage: TokenUsage = {
+        input: 0,
+        output: 0,
+        cost: 0,
+        cacheSavings: 0
+      };
       
       return {
         result: {
@@ -350,7 +387,11 @@ export class DocumentService {
       };
       
       // Call Claude API for analysis
-      const analysisResponse = await this.claudeApi.callApi(apiRequest);
+      const analysisResponse = await this.claudeApi.callApi(
+        apiRequest.model,
+        apiRequest.messages,
+        apiRequest.max_tokens
+      );
       
       // Parse the analysis result
       const contentText = analysisResponse.content?.[0]?.text || '';
@@ -359,7 +400,16 @@ export class DocumentService {
       const comparisonResult = this.processClaudeResponse(contentText);
       
       // Calculate token usage cost
-      const tokenUsage = this.claudeApi.calculateTokenUsage(analysisResponse.usage, this.claudeApi.MODELS.ANALYSIS);
+      const tokenUsage: TokenUsage = {
+        input: analysisResponse.usage.input_tokens,
+        output: analysisResponse.usage.output_tokens,
+        cost: this.calculateCost(
+          analysisResponse.usage.input_tokens,
+          analysisResponse.usage.output_tokens,
+          this.claudeApi.MODELS.ANALYSIS
+        ),
+        cacheSavings: this.calculateCacheSavings(analysisResponse.usage)
+      };
       
       return {
         result: comparisonResult,
@@ -371,13 +421,18 @@ export class DocumentService {
       // Provide a fallback result with error information
       return {
         result: {
-          tables: [],
+          tables: [] as ComparisonTable[],
           analysis: `Analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
           summary: 'Unable to analyze the documents due to an error.',
           insights: 'No insights available due to analysis failure.',
           issues: `Analysis process encountered an error: ${error instanceof Error ? error.message : 'Unknown error'}`
-        },
-        tokenUsage: this.claudeApi.calculateTokenUsage({}, this.claudeApi.MODELS.ANALYSIS)
+        } as ComparisonResult,
+        tokenUsage: {
+          input: 0,
+          output: 0,
+          cost: 0,
+          cacheSavings: 0
+        }
       };
     }
   }
@@ -449,17 +504,17 @@ export class DocumentService {
           role: 'user',
           content: contentBlocks
         }
-      ],
-      // Enable extended thinking for the validation stage
-      thinking: {
-        type: 'enabled',
-        budget_tokens: this.claudeApi.MODELS.VALIDATION.thinkingBudget || 32000
-      }
+      ]
+      // Removed extended thinking for validation to avoid 400 Bad Request errors
     };
     
     // Call Claude API for validation
-    console.log(`Calling Claude API (${this.claudeApi.MODELS.VALIDATION.name}) for validation with extended thinking...`);
-    const validationResponse = await this.claudeApi.callApi(apiRequest);
+    console.log(`Calling Claude API (${this.claudeApi.MODELS.VALIDATION.name}) for validation...`);
+    const validationResponse = await this.claudeApi.callApi(
+      apiRequest.model,
+      apiRequest.messages,
+      apiRequest.max_tokens
+    );
     console.log(`Received response from Claude API, processing validation results...`);
     
     // Process the validation result
@@ -501,7 +556,16 @@ export class DocumentService {
     const tables = this.processClaudeResponse(finalResults);
     
     // Calculate token usage cost
-    const tokenUsage = this.claudeApi.calculateTokenUsage(validationResponse.usage, this.claudeApi.MODELS.VALIDATION);
+    const tokenUsage: TokenUsage = {
+      input: validationResponse.usage.input_tokens,
+      output: validationResponse.usage.output_tokens,
+      cost: this.calculateCost(
+        validationResponse.usage.input_tokens,
+        validationResponse.usage.output_tokens,
+        this.claudeApi.MODELS.VALIDATION
+      ),
+      cacheSavings: this.calculateCacheSavings(validationResponse.usage)
+    };
     
     // Extract confidence score from the validation text
     const confidenceMatch = finalResults.match(/confidence\s+score:?\s*(\d+)%/i) || 
@@ -594,6 +658,23 @@ export class DocumentService {
     } else {
       return 'Unknown Document';
     }
+  }
+  
+  private calculateCost(inputTokens: number, outputTokens: number, model: any): number {
+    const inputCost = (inputTokens / 1000000) * model.costPerInputMToken;
+    const outputCost = (outputTokens / 1000000) * model.costPerOutputMToken;
+    return inputCost + outputCost;
+  }
+  
+  private calculateCacheSavings(usage: any): number {
+    // Calculate cache savings from cached tokens (if available)
+    const cacheReadTokens = usage.cache_read_input_tokens || 0;
+    // Return 0 if no cache savings
+    if (cacheReadTokens === 0) {
+      return 0;
+    }
+    // Return the estimated cost savings (90% discount on cached content)
+    return cacheReadTokens * 0.9;
   }
 }
 

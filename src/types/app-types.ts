@@ -85,6 +85,7 @@ export interface ProcessingOptions {
   showThinking?: boolean;
   useExtendedOutput?: boolean;
   skipValidation?: boolean;
+  comparisonType?: string;
 }
 
 // Processing Result Interfaces
@@ -99,8 +100,11 @@ export interface ExtractionResult {
 }
 
 export interface AnalysisResult {
-  result: ComparisonResult;
-  rawText?: string;
+  result: {
+    tables: ComparisonTable[];
+    discrepancies?: string[];
+    corrections?: string[];
+  };
   tokenUsage: TokenUsage;
 }
 
@@ -117,12 +121,17 @@ export interface ValidationResult {
 
 export interface ProcessingResult {
   result: ComparisonResult;
-  stages: {
+  isValid?: boolean;
+  confidenceScore?: number;
+  thinkingProcess?: string;
+  tokenUsage: TokenUsage;
+  extractionResults?: any[];
+  errors?: string[];
+  stages?: {
     extraction: ExtractionResult;
     analysis: AnalysisResult;
     validation?: ValidationResult;
   };
-  totalTokenUsage: TokenUsage;
 }
 
 // Claude API Types

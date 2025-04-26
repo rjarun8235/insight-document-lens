@@ -1,16 +1,46 @@
 import { useState, useEffect } from 'react';
-import { DocumentFile, ComparisonResult, ParsedDocument } from '../lib/types';
+import { DocumentFile, ComparisonResult as LibComparisonResult, ComparisonTable as LibComparisonTable, ParsedDocument } from '../lib/types';
 import { FileUpload } from './FileUpload';
 import { parseDocument } from '../lib/parsers';
-import DocLensService from '../services/tsv-service';
+import docLensService from '../services/doclens-service';
 import { Button } from '../components/ui/custom-button';
 import { ComparisonView } from './ComparisonView';
 import { LoadingIndicator } from './ui/loading-indicator';
 import ModernLoading from './ui/modern-loading';
 import Header from './Header';
+import { analyzeDocuments } from '../utils/document-utils';
+import { ComparisonResult as AppComparisonResult, ComparisonTable as AppComparisonTable, TokenUsage } from '../types/app-types';
 
-// Initialize the DocLens service
-const docLensService = new DocLensService();
+// Define a more complete token usage type for internal use
+interface ExtendedTokenUsage {
+  input: number;
+  output: number;
+  cost: number;
+  cacheSavings?: number;
+}
+
+// Type adapter function to convert between different result formats
+function adaptComparisonResult(result: AppComparisonResult): LibComparisonResult {
+  // Ensure all tables have required title property
+  const adaptedTables: LibComparisonTable[] = result.tables.map(table => ({
+    ...table,
+    title: table.title || 'Untitled Table' // Provide default title if missing
+  }));
+  
+  return {
+    tables: adaptedTables,
+    itemComparison: result.itemComparison,
+    verification: result.verification || '',
+    validation: result.validation,
+    review: result.review,
+    analysis: result.analysis,
+    summary: result.summary,
+    insights: result.insights,
+    recommendations: result.recommendations,
+    risks: result.risks,
+    issues: result.issues
+  };
+}
 
 // Available comparison types
 const comparisonTypes = [
@@ -31,14 +61,14 @@ const processingModes = [
 export function DocumentProcessor() {
   const [files, setFiles] = useState<DocumentFile[]>([]);
   const [parsedDocuments, setParsedDocuments] = useState<ParsedDocument[]>([]);
-  const [comparisonResult, setComparisonResult] = useState<ComparisonResult | null>(null);
+  const [comparisonResult, setComparisonResult] = useState<LibComparisonResult | null>(null);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [followUpQuestion, setFollowUpQuestion] = useState<string>('');
   const [isAskingFollowUp, setIsAskingFollowUp] = useState<boolean>(false);
   const [processingProgress, setProcessingProgress] = useState<number>(0);
   const [documentNames, setDocumentNames] = useState<string[]>([]);
-  const [tokenUsage, setTokenUsage] = useState<{input: number, output: number, cost: number} | null>(null);
+  const [tokenUsage, setTokenUsage] = useState<ExtendedTokenUsage | null>(null);
   const [processingStage, setProcessingStage] = useState<string>('');
   const [comparisonType, setComparisonType] = useState<string>('logistics');
   const [processingMode, setProcessingMode] = useState<string>('advanced');
@@ -47,7 +77,6 @@ export function DocumentProcessor() {
   const [stageResults, setStageResults] = useState<any | null>(null);
   const [currentStage, setCurrentStage] = useState<string>('');
   const [stageProgress, setStageProgress] = useState<number>(0);
-  const [result, setResult] = useState<any | null>(null);
 
   // Auto-detect appropriate comparison type based on file types
   useEffect(() => {
@@ -179,27 +208,19 @@ export function DocumentProcessor() {
       // First parse the files to get ParsedDocument objects
       const parsed = await Promise.all(files.map(file => parseDocument(file)));
       
-      // Create a new instance of the DocLens service
-      const service = new DocLensService();
-      
-      // Use the default comparison type
-      const detectedType = 'logistics';
-      setComparisonType(detectedType);
-      
       // Process the documents with the DocLens service
-      const result = await service.processDocuments(
+      const result = await docLensService.processDocuments(
         parsed,
-        detectedType,
         {
           showThinking,
-          useExtendedOutput: processingMode === 'advanced'
+          useExtendedOutput: processingMode === 'advanced',
+          comparisonType: comparisonType || 'logistics'
         }
       );
       
       // Update state with the results
-      setComparisonResult(result.result);
-      setResult(result); // Store the full result including stages and token usage
-      setTokenUsage(result.totalTokenUsage);
+      setComparisonResult(adaptComparisonResult(result.result));
+      setTokenUsage(result.tokenUsage);
       setThinkingProcess(result.stages?.validation?.thinkingProcess || null);
       setStageResults(result.stages);
       
@@ -275,13 +296,13 @@ export function DocumentProcessor() {
       // Create a new instruction with the follow-up question
       const instruction = `Based on the previous comparison of documents, please answer this follow-up question: ${followUpQuestion}`;
       
-      // Use the same documents but with the new instruction
-      const response = await docLensService.analyzeDocuments(parsedDocuments, instruction);
+      // Use the analyzeDocuments function from document-utils
+      const response = await analyzeDocuments(parsedDocuments, instruction);
       
       // Extract the result and token usage
       const { result, tokenUsage } = response;
       
-      setComparisonResult(result);
+      setComparisonResult(adaptComparisonResult(result));
       setTokenUsage(tokenUsage);
       setFollowUpQuestion('');
       setProcessingStage('Follow-up question answered!');
@@ -296,10 +317,52 @@ export function DocumentProcessor() {
     }
   };
 
-  const renderTokenUsage = () => {
-    if (!result || !result.totalTokenUsage) return null;
+  const handleFollowUpSubmit = async () => {
+    if (!followUpQuestion.trim() || isProcessing) return;
     
-    const { input, output, cost, cacheSavings } = result.totalTokenUsage;
+    setIsProcessing(true);
+    setError(null);
+    
+    try {
+      // Use the document utils to analyze the follow-up question
+      const followUpResult = await analyzeDocuments(
+        parsedDocuments.map(doc => doc.content),
+        followUpQuestion,
+        { comparisonType: comparisonType || 'logistics' }
+      );
+      
+      if (followUpResult && followUpResult.result) {
+        // Adapt the result to match the expected format
+        const adaptedResult = adaptComparisonResult(followUpResult.result);
+        setComparisonResult(adaptedResult);
+        
+        // Update token usage
+        if (followUpResult.tokenUsage) {
+          setTokenUsage(prevUsage => ({
+            input: (prevUsage?.input || 0) + followUpResult.tokenUsage.input,
+            output: (prevUsage?.output || 0) + followUpResult.tokenUsage.output,
+            cost: (prevUsage?.cost || 0) + followUpResult.tokenUsage.cost,
+            cacheSavings: (prevUsage?.cacheSavings || 0) + (followUpResult.tokenUsage.cacheSavings || 0)
+          }));
+        }
+        
+        // Update thinking process if available
+        if (followUpResult.thinkingProcess) {
+          setThinkingProcess(followUpResult.thinkingProcess);
+        }
+      }
+    } catch (error) {
+      console.error('Error processing follow-up question:', error);
+      setError('Failed to process your follow-up question. Please try again.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const renderTokenUsage = () => {
+    if (!comparisonResult || !tokenUsage) return null;
+    
+    const { input, output, cost, cacheSavings } = tokenUsage;
     
     return (
       <div className="mt-4 p-4 bg-gray-50 rounded-md text-sm">
@@ -320,7 +383,7 @@ export function DocumentProcessor() {
             </div>
           )}
         </div>
-        {result.stages?.extraction?.tokenUsage?.cacheSavings > 0 && (
+        {stageResults?.extraction?.tokenUsage?.cacheSavings > 0 && (
           <div className="mt-2 text-xs text-green-700">
             <span className="font-medium">✓ Prompt Caching:</span> Enabled (90% cost reduction on cached content)
           </div>
@@ -441,7 +504,7 @@ export function DocumentProcessor() {
                       <p><span className="font-medium">Input Tokens:</span> {stageResults.analysis.tokenUsage.input.toLocaleString()}</p>
                       <p><span className="font-medium">Output Tokens:</span> {stageResults.analysis.tokenUsage.output.toLocaleString()}</p>
                       <p><span className="font-medium">Cost:</span> ${stageResults.analysis.tokenUsage.cost.toFixed(6)}</p>
-                      <p><span className="font-medium">Tables Generated:</span> {stageResults.analysis.comparisonResult.tables?.length || 0}</p>
+                      <p><span className="font-medium">Tables Generated:</span> {stageResults.analysis.result?.tables?.length || 0}</p>
                     </div>
                   </div>
                   
@@ -478,7 +541,7 @@ export function DocumentProcessor() {
                   disabled={isAskingFollowUp}
                 />
                 <Button 
-                  onClick={handleAskFollowUp}
+                  onClick={handleFollowUpSubmit}
                   disabled={!followUpQuestion.trim() || isAskingFollowUp}
                 >
                   {isAskingFollowUp ? <LoadingIndicator size="sm" /> : 'Ask'}

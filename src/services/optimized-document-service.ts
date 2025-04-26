@@ -33,6 +33,18 @@ interface DocumentExtractionResult {
  */
 export default class OptimizedDocumentService {
   private claudeApi: ClaudeApiService;
+  private EXTRACTION_MODEL = MODELS.EXTRACTION.name;
+  private EXTRACTION_MAX_TOKENS = MODELS.EXTRACTION.maxTokens;
+  private EXTRACTION_THINKING = { 
+    type: 'enabled', 
+    budget_tokens: 8000 // Hardcoded value since thinkingBudget doesn't exist in EXTRACTION model
+  };
+  private VALIDATION_MODEL = MODELS.VALIDATION.name;
+  private VALIDATION_MAX_TOKENS = MODELS.VALIDATION.maxTokens;
+  private VALIDATION_THINKING = { 
+    type: 'enabled', 
+    budget_tokens: 16000 // Hardcoded value since thinkingBudget doesn't exist in VALIDATION model
+  };
   
   constructor() {
     this.claudeApi = new ClaudeApiService();
@@ -44,81 +56,95 @@ export default class OptimizedDocumentService {
    */
   public async processDocuments(
     documents: ParsedDocument[],
-    comparisonType: string,
-    options: ProcessingOptions = {}
+    options: ProcessingOptions
   ): Promise<ProcessingResult> {
-    console.log('🚀 Starting optimized document processing pipeline');
-    console.log(`📄 Processing ${documents.length} documents with comparison type: ${comparisonType}`);
-    
     try {
-      // Step 1: Extract data from each document independently
-      console.log('🔍 Step 1: Extracting data from documents independently');
-      const extractionResults: DocumentExtractionResult[] = [];
+      console.log(`🚀 Starting document processing for ${documents.length} documents`);
+      console.log(`Processing options: ${JSON.stringify(options)}`);
       
-      // Process each document in sequence
-      for (let i = 0; i < documents.length; i++) {
-        const document = documents[i];
-        console.log(`Processing document ${i + 1}/${documents.length}: ${document.name}`);
-        
-        const result = await this.extractDocumentData(document);
-        extractionResults.push(result);
+      // Track overall token usage
+      const totalTokenUsage: TokenUsage = {
+        input: 0,
+        output: 0,
+        cost: 0,
+        cacheSavings: 0
+      };
+      
+      // Step 1: Extract data from each document independently
+      console.log(`Step 1: Extracting data from ${documents.length} documents independently...`);
+      const extractionResults: DocumentExtractionResult[] = [];
+      const extractionErrors: string[] = [];
+      
+      // Process each document in parallel
+      const extractionPromises = documents.map(async (document) => {
+        try {
+          const result = await this.extractDocumentData(document);
+          extractionResults.push(result);
+          
+          // Update token usage
+          totalTokenUsage.input += result.tokenUsage.input;
+          totalTokenUsage.output += result.tokenUsage.output;
+          totalTokenUsage.cost += result.tokenUsage.cost;
+          
+          if (result.tokenUsage.cacheSavings) {
+            totalTokenUsage.cacheSavings = (totalTokenUsage.cacheSavings || 0) + result.tokenUsage.cacheSavings;
+          }
+          
+          console.log(`✅ Extracted data from ${document.name} (${result.documentType})`);
+        } catch (error) {
+          console.error(`❌ Failed to extract data from ${document.name}:`, error);
+          extractionErrors.push(`${document.name}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+      });
+      
+      // Wait for all extraction processes to complete
+      await Promise.all(extractionPromises);
+      
+      // Check if we have any successful extractions
+      if (extractionResults.length === 0) {
+        throw new Error(`Failed to extract data from any documents: ${extractionErrors.join(', ')}`);
       }
       
-      console.log('✅ Step 1 complete: Data extraction');
+      // Log extraction errors if any
+      if (extractionErrors.length > 0) {
+        console.warn(`⚠️ Extraction errors occurred for ${extractionErrors.length} documents:`, extractionErrors);
+      }
       
-      // Step 2: Validate all extracted data together
-      console.log('🔍 Step 2: Validating extracted data');
-      const validationResult: ValidationResult = await this.validateExtractedData(
+      // Step 2: Validate and compare the extracted data
+      console.log(`Step 2: Validating and comparing extracted data from ${extractionResults.length} documents...`);
+      const validationResult = await this.validateExtractedData(
         documents,
         extractionResults,
-        comparisonType
+        options.comparisonType || 'General'
       );
       
-      console.log('✅ Step 2 complete: Data validation');
+      // Update token usage with validation usage
+      totalTokenUsage.input += validationResult.tokenUsage.input;
+      totalTokenUsage.output += validationResult.tokenUsage.output;
+      totalTokenUsage.cost += validationResult.tokenUsage.cost;
       
-      // Calculate total token usage
-      const totalTokenUsage = this.calculateTotalTokenUsage(
-        extractionResults.map(r => r.tokenUsage),
-        validationResult.tokenUsage
-      );
+      if (validationResult.tokenUsage.cacheSavings) {
+        totalTokenUsage.cacheSavings = (totalTokenUsage.cacheSavings || 0) + validationResult.tokenUsage.cacheSavings;
+      }
       
+      // Log validation result
+      console.log(`✅ Validation complete with confidence score: ${validationResult.confidenceScore * 100}%`);
+      console.log(`🔢 Total token usage: ${totalTokenUsage.input} input, ${totalTokenUsage.output} output`);
+      console.log(`💰 Estimated cost: $${totalTokenUsage.cost.toFixed(4)}`);
+      
+      if (totalTokenUsage.cacheSavings) {
+        console.log(`💰 Cache savings: $${totalTokenUsage.cacheSavings.toFixed(4)}`);
+      }
+      
+      // Return the final processing result
       return {
         result: validationResult.result,
-        stages: {
-          extraction: {
-            result: {
-              documentData: extractionResults.map(r => ({
-                documentName: r.documentName,
-                documentType: r.documentType,
-                extractedFields: r.extractedFields
-              })),
-              documentTypes: extractionResults.map(r => r.documentType),
-              extractedFields: extractionResults.reduce((acc, r) => {
-                Object.entries(r.extractedFields).forEach(([key, value]) => {
-                  if (!acc[key]) acc[key] = [];
-                  acc[key].push(value);
-                });
-                return acc;
-              }, {} as Record<string, any[]>)
-            },
-            tokenUsage: totalTokenUsage
-          },
-          analysis: {
-            result: {
-              discrepancies: [],
-              corrections: [],
-              tables: [] // Add the required tables property
-            },
-            tokenUsage: {
-              input: 0,
-              output: 0,
-              cost: 0,
-              cacheSavings: undefined
-            }
-          },
-          validation: validationResult
-        },
-        totalTokenUsage
+        isValid: validationResult.isValid,
+        confidenceScore: validationResult.confidenceScore,
+        thinkingProcess: validationResult.thinkingProcess,
+        tokenUsage: totalTokenUsage,
+        extractionResults,
+        errors: extractionErrors.length > 0 ? extractionErrors : undefined
       };
     } catch (error) {
       console.error('Error processing documents:', error);
@@ -131,85 +157,79 @@ export default class OptimizedDocumentService {
    */
   private async extractDocumentData(document: ParsedDocument): Promise<DocumentExtractionResult> {
     try {
-      // Prepare content blocks for the extraction stage
-      const contentBlocks: ContentBlock[] = [];
+      console.log(`🔍 Extracting data from document: ${document.name}`);
       
-      // Add the document content block
-      if (document.type === 'application/pdf' && document.base64Data) {
-        // Add PDF as document content block with prompt caching
-        contentBlocks.push({
-          type: 'document',
-          source: {
-            type: 'base64',
-            media_type: 'application/pdf',
-            data: document.base64Data.replace(/^data:application\/pdf;base64,/, '')
-          },
-          cache_control: { type: 'ephemeral' } // Enable prompt caching for PDF documents
-        });
-      } else if (document.content) {
-        // Add text content block for non-PDF documents
-        contentBlocks.push({
-          type: 'text',
-          text: document.content
-        });
-      }
+      // Prepare the instruction for extraction
+      const instruction = extractionPrompt;
       
-      // Add the extraction instructions
-      contentBlocks.push({
-        type: 'text',
-        text: extractionPrompt
-      });
+      // Prepare the document content
+      const documentContent = document.content;
       
-      // Configure API parameters for extraction stage
-      const apiParams = {
-        model: MODELS.EXTRACTION.name,
-        max_tokens: MODELS.EXTRACTION.maxTokens,
-        messages: [
-          {
-            role: 'user',
-            content: contentBlocks
-          }
-        ]
-      };
+      // Create messages for Claude API
+      const messages = [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: instruction
+            },
+            {
+              type: 'text',
+              text: documentContent
+            }
+          ]
+        }
+      ];
       
-      // Call Claude API for extraction
-      console.log(`Calling Claude API (${MODELS.EXTRACTION.name}) for document extraction...`);
-      const extractionResponse = await this.claudeApi.callApi(apiParams);
+      // Call Claude API for document extraction
+      console.log(`Calling Claude API (${this.EXTRACTION_MODEL}) for document extraction...`);
+      const response = await this.claudeApi.callApi(
+        this.EXTRACTION_MODEL,
+        messages,
+        this.EXTRACTION_MAX_TOKENS,
+        this.EXTRACTION_THINKING
+      );
+      
       console.log(`Received response from Claude API, processing extraction results...`);
       
-      // Process the extraction result
-      const extractionText = extractionResponse.content?.[0]?.text || '';
-      console.log(`Claude extraction response preview: ${extractionText.substring(0, 100)}...`);
+      // Extract the response text
+      const responseText = response.content[0].text;
+      
+      // Log a preview of the response
+      console.log(`Claude extraction response preview: ${responseText.substring(0, 200)}...`);
       
       // Parse the JSON response
       let extractedData;
       try {
-        // Look for JSON in the response
-        const jsonMatch = extractionText.match(/```json\n([\s\S]*?)\n```/) || 
-                          extractionText.match(/{[\s\S]*}/);
-        
-        if (jsonMatch) {
-          const jsonString = jsonMatch[1] || jsonMatch[0];
-          console.log(`Attempting to parse JSON: ${jsonString.substring(0, 100)}...`);
-          extractedData = JSON.parse(jsonString);
-        } else {
-          throw new Error('No JSON found in extraction response');
-        }
-      } catch (parseError) {
-        console.error('Error parsing extraction JSON:', parseError);
-        throw new Error(`Failed to parse extraction result: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`);
+        console.log(`Attempting to parse JSON: ${responseText.substring(0, 200)}...`);
+        extractedData = this.parseJsonFromResponse(responseText);
+      } catch (error) {
+        console.error(`Error parsing JSON from Claude response:`, error);
+        throw new Error(`Failed to parse extraction result: ${error instanceof Error ? error.message : 'Unknown error'}`);
       }
       
-      // Calculate token usage cost
-      const tokenUsage = this.calculateTokenUsageCost(extractionResponse.usage, MODELS.EXTRACTION);
+      // Calculate token usage
+      const tokenUsage: TokenUsage = {
+        input: response.usage.input_tokens,
+        output: response.usage.output_tokens,
+        cost: this.calculateCost(
+          response.usage.input_tokens,
+          response.usage.output_tokens,
+          this.EXTRACTION_MODEL
+        )
+      };
       
-      // Determine document type
-      const documentType = extractedData.documentType || this.guessDocumentType(document.name);
+      // Add cache savings if applicable
+      if (response.usage.cache_read_input_tokens) {
+        tokenUsage.cacheSavings = this.calculateCacheSavings(response.usage);
+      }
       
+      // Return the extracted data
       return {
         documentName: document.name,
-        documentType,
-        extractedFields: extractedData.extractedFields || {},
+        documentType: extractedData.documentType || 'Unknown',
+        extractedFields: extractedData.fields || {},
         tokenUsage
       };
     } catch (error) {
@@ -219,7 +239,7 @@ export default class OptimizedDocumentService {
   }
   
   /**
-   * Validate all extracted data together
+   * Validate extracted document data
    */
   private async validateExtractedData(
     documents: ParsedDocument[],
@@ -227,94 +247,74 @@ export default class OptimizedDocumentService {
     comparisonType: string
   ): Promise<ValidationResult> {
     try {
-      // Prepare content blocks for the validation stage
-      const contentBlocks: ContentBlock[] = [];
+      console.log(`🔍 Validating extracted data from ${documents.length} documents`);
       
-      // Add a summary of each document's extracted data
-      // This avoids sending the full document content again
-      extractionResults.forEach((result, index) => {
-        contentBlocks.push({
-          type: 'text',
-          text: `Document ${index + 1}: ${result.documentName} (${result.documentType})\n\n${JSON.stringify(result.extractedFields, null, 2)}`
-        });
-      });
+      // Prepare the validation prompt
+      const validationPrompt = this.prepareValidationPrompt(extractionResults, comparisonType);
       
-      // Add the validation instructions
-      contentBlocks.push({
-        type: 'text',
-        text: `
-You are a document validation specialist for TSV Global, a logistics company. Your task is to validate and compare the extracted data from the provided logistics documents.
-
-TASK:
-1. Validate the extracted data for accuracy and completeness
-2. Compare the documents to identify any discrepancies or inconsistencies
-3. Verify that all required fields are present and correctly formatted
-4. Provide a confidence score for the overall validation (0-100%)
-
-Document Type: ${comparisonType}
-
-IMPORTANT: Structure your response as follows:
-
-1. VALIDATION SUMMARY:
-   - Provide a clear, concise summary of your validation
-   - Include a confidence score (0-100%)
-   - List any corrections needed
-
-2. COMPARISON TABLE:
-   - Create a well-structured markdown table comparing key fields across documents
-   - Highlight any discrepancies or inconsistencies
-   - Use ✅ for matching fields and ❌ for mismatches
-
-Focus on the following key logistics fields:
-- Consignee and Shipper information
-- Document numbers and dates
-- Item descriptions and quantities
-- Weights and measurements
-- Delivery terms and payment terms
-- Container/shipment details
-- Origin and destination information
-
-Your validation is critical for ensuring accurate logistics processing and compliance.
-`
-      });
-      
-      // Configure API parameters for validation stage
-      const apiParams = {
-        model: MODELS.VALIDATION.name,
-        max_tokens: MODELS.VALIDATION.maxTokens,
-        messages: [
-          {
-            role: 'user',
-            content: contentBlocks
-          }
-        ]
-      };
+      // Create messages for Claude API
+      const messages = [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: validationPrompt
+            }
+          ]
+        }
+      ];
       
       // Call Claude API for validation
-      console.log(`Calling Claude API (${MODELS.VALIDATION.name}) for validation...`);
-      const validationResponse = await this.claudeApi.callApi(apiParams);
+      console.log(`Calling Claude API (${this.VALIDATION_MODEL}) for validation...`);
+      const response = await this.claudeApi.callApi(
+        this.VALIDATION_MODEL,
+        messages,
+        this.VALIDATION_MAX_TOKENS,
+        this.VALIDATION_THINKING
+      );
+      
       console.log(`Received response from Claude API, processing validation results...`);
       
-      // Process the validation result
-      const validationText = validationResponse.content?.[0]?.text || '';
+      // Extract the response text and thinking process
+      const responseText = response.content[0].text;
+      const thinkingProcess = response.content.find((c: any) => c.type === 'thinking')?.thinking;
       
-      // Process the validation text into a structured format
-      const comparisonResult = this.processValidationResponse(validationText);
+      // Process the validation response
+      const comparisonResult = this.processValidationResponse(responseText);
       
-      // Calculate token usage cost
-      const tokenUsage = this.calculateTokenUsageCost(validationResponse.usage, MODELS.VALIDATION);
+      // Calculate token usage
+      const tokenUsage: TokenUsage = {
+        input: response.usage.input_tokens,
+        output: response.usage.output_tokens,
+        cost: this.calculateCost(
+          response.usage.input_tokens,
+          response.usage.output_tokens,
+          this.VALIDATION_MODEL
+        )
+      };
+      
+      // Add cache savings if applicable
+      if (response.usage.cache_read_input_tokens) {
+        tokenUsage.cacheSavings = this.calculateCacheSavings(response.usage);
+      }
+      
+      // Extract confidence score if available
+      const confidenceScore = this.extractConfidenceScore(responseText);
+      
+      // Determine if the documents are valid based on confidence score
+      const isValid = confidenceScore >= 0.8; // 80% confidence threshold
       
       return {
         result: comparisonResult,
-        confidenceScore: comparisonResult.confidenceScore || 0,
-        isValid: (comparisonResult.confidenceScore || 0) >= 70,
-        finalResults: validationText,
-        rawText: validationText,
+        isValid,
+        confidenceScore,
+        thinkingProcess,
         tokenUsage
       };
     } catch (error) {
-      console.error('Error validating extracted data:', error);
-      throw new Error(`Failed to validate extracted data: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      console.error('Error validating documents:', error);
+      throw new Error(`Failed to validate documents: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
   
@@ -411,6 +411,25 @@ Your validation is critical for ensuring accurate logistics processing and compl
   }
   
   /**
+   * Parse JSON from response text
+   */
+  private parseJsonFromResponse(text: string): any {
+    try {
+      const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || 
+                        text.match(/{[\s\S]*}/);
+      
+      if (jsonMatch) {
+        const jsonString = jsonMatch[1] || jsonMatch[0];
+        return JSON.parse(jsonString);
+      } else {
+        throw new Error('No JSON found in response');
+      }
+    } catch (error) {
+      throw new Error(`Failed to parse JSON from response: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+  
+  /**
    * Calculate token usage cost
    */
   private calculateTokenUsageCost(usage: any, model: any): TokenUsage {
@@ -440,29 +459,41 @@ Your validation is critical for ensuring accurate logistics processing and compl
    * Calculate total token usage across all stages
    */
   private calculateTotalTokenUsage(
-    extractionUsages: TokenUsage[],
-    validationUsage: TokenUsage
+    tokenUsages: TokenUsage[]
   ): TokenUsage {
     // Sum up all token usages
-    const totalInput = extractionUsages.reduce((sum, usage) => sum + usage.input, 0) + validationUsage.input;
-    const totalOutput = extractionUsages.reduce((sum, usage) => sum + usage.output, 0) + validationUsage.output;
-    const totalCost = extractionUsages.reduce((sum, usage) => sum + usage.cost, 0) + validationUsage.cost;
+    const totalInput = tokenUsages.reduce((sum, usage) => sum + usage.input, 0);
+    const totalOutput = tokenUsages.reduce((sum, usage) => sum + usage.output, 0);
+    const totalCost = tokenUsages.reduce((sum, usage) => sum + usage.cost, 0);
     
     // Calculate total cache savings if applicable
-    const extractionSavings = extractionUsages
+    const totalCacheSavings = tokenUsages
       .filter(usage => usage.cacheSavings !== undefined)
       .reduce((sum, usage) => sum + (usage.cacheSavings || 0), 0);
-    
-    const totalCacheSavings = (extractionSavings > 0 || validationUsage.cacheSavings)
-      ? (extractionSavings + (validationUsage.cacheSavings || 0))
-      : undefined;
     
     return {
       input: totalInput,
       output: totalOutput,
       cost: totalCost,
-      cacheSavings: totalCacheSavings
+      cacheSavings: totalCacheSavings > 0 ? totalCacheSavings : undefined
     };
+  }
+  
+  /**
+   * Calculate cost
+   */
+  private calculateCost(inputTokens: number, outputTokens: number, model: string): number {
+    const inputCost = (inputTokens / 1000000) * MODELS[model].costPerInputMToken;
+    const outputCost = (outputTokens / 1000000) * MODELS[model].costPerOutputMToken;
+    return inputCost + outputCost;
+  }
+  
+  /**
+   * Calculate cache savings
+   */
+  private calculateCacheSavings(usage: any): number {
+    const cacheReadTokens = usage.cache_read_input_tokens;
+    return (cacheReadTokens / 1000000) * MODELS[this.EXTRACTION_MODEL].costPerInputMToken;
   }
   
   /**
@@ -490,6 +521,76 @@ Your validation is critical for ensuring accurate logistics processing and compl
     } else {
       return 'Unknown';
     }
+  }
+  
+  /**
+   * Prepare the validation prompt
+   */
+  private prepareValidationPrompt(extractionResults: DocumentExtractionResult[], comparisonType: string): string {
+    // Prepare content blocks for the validation stage
+    const contentBlocks: ContentBlock[] = [];
+    
+    // Add a summary of each document's extracted data
+    // This avoids sending the full document content again
+    extractionResults.forEach((result, index) => {
+      contentBlocks.push({
+        type: 'text',
+        text: `Document ${index + 1}: ${result.documentName} (${result.documentType})\n\n${JSON.stringify(result.extractedFields, null, 2)}`
+      });
+    });
+    
+    // Add the validation instructions
+    contentBlocks.push({
+      type: 'text',
+      text: `
+You are a document validation specialist for TSV Global, a logistics company. Your task is to validate and compare the extracted data from the provided logistics documents.
+
+TASK:
+1. Validate the extracted data for accuracy and completeness
+2. Compare the documents to identify any discrepancies or inconsistencies
+3. Verify that all required fields are present and correctly formatted
+4. Provide a confidence score for the overall validation (0-100%)
+
+Document Type: ${comparisonType}
+
+IMPORTANT: Structure your response as follows:
+
+1. VALIDATION SUMMARY:
+   - Provide a clear, concise summary of your validation
+   - Include a confidence score (0-100%)
+   - List any corrections needed
+
+2. COMPARISON TABLE:
+   - Create a well-structured markdown table comparing key fields across documents
+   - Highlight any discrepancies or inconsistencies
+   - Use ✅ for matching fields and ❌ for mismatches
+
+Focus on the following key logistics fields:
+- Consignee and Shipper information
+- Document numbers and dates
+- Item descriptions and quantities
+- Weights and measurements
+- Delivery terms and payment terms
+- Container/shipment details
+- Origin and destination information
+
+Your validation is critical for ensuring accurate logistics processing and compliance.
+`
+    });
+    
+    // Join the content blocks into a single string
+    return contentBlocks.map(block => block.text).join('\n\n');
+  }
+  
+  /**
+   * Extract confidence score from the validation text
+   */
+  private extractConfidenceScore(text: string): number {
+    const confidenceMatch = text.match(/confidence\s+score:?\s*(\d+)%/i) || 
+                           text.match(/confidence:?\s*(\d+)%/i) ||
+                           text.match(/score:?\s*(\d+)%/i);
+    
+    return confidenceMatch ? parseInt(confidenceMatch[1], 10) / 100 : 0;
   }
 }
 

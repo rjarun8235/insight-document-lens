@@ -6,7 +6,7 @@
  */
 
 import OptimizedDocumentService from './optimized-document-service';
-import { ParsedDocument, ComparisonResult, DocumentType } from '../lib/types';
+import { ParsedDocument, ComparisonResult, ProcessingOptions, ProcessingResult } from '../types/app-types';
 
 // Underlying implementation using proprietary TSV Global AI technology
 const optimizedService = new OptimizedDocumentService();
@@ -17,41 +17,15 @@ export default class DocLensService {
    */
   async processDocuments(
     documents: ParsedDocument[], 
-    comparisonType: string = 'Logistics Documents',
-    options: {
-      showThinking?: boolean;
-      useExtendedOutput?: boolean;
-      skipValidation?: boolean;
-    } = {}
-  ): Promise<{
-    result: ComparisonResult;
-    stages: any;
-    totalTokenUsage: {
-      input: number;
-      output: number;
-      cost: number;
-      cacheSavings?: number;
-    };
-  }> {
+    options: ProcessingOptions = {}
+  ): Promise<ProcessingResult> {
     console.log('🚀 Starting DocLens optimized document processing pipeline');
     
     // Process documents with the optimized service
-    const result = await optimizedService.processDocuments(documents, comparisonType, options);
+    const result = await optimizedService.processDocuments(documents, options);
     
-    // Adapt the result to match the expected types
-    const adaptedResult = {
-      result: result.result as ComparisonResult,
-      stages: result.stages,
-      totalTokenUsage: {
-        input: result.totalTokenUsage.input,
-        output: result.totalTokenUsage.output,
-        cost: result.totalTokenUsage.cost,
-        cacheSavings: result.totalTokenUsage.cacheSavings,
-      },
-    };
-
-    // Return the adapted result
-    return adaptedResult;
+    // Return the result directly
+    return result;
   }
 
   /**

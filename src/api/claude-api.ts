@@ -48,96 +48,102 @@ export class ClaudeApiService {
   private proxyUrl = 'https://cbrgpzdxttzlvvryysaf.supabase.co/functions/v1/claude-api-proxy';
   
   /**
-   * Call the Claude API
-   * @param request API request parameters
-   * @returns API response
+   * Call the Claude API with the given parameters
    */
-  async callApi(request: ApiRequest): Promise<ApiResponse> {
+  async callApi(
+    model: string,
+    messages: Array<{ role: string; content: string | ContentBlock[] }>,
+    maxTokens: number = 4000,
+    thinking?: { type: string; budget_tokens: number }
+  ): Promise<ApiResponse> {
+    const modelConfig = this.getModelConfig(model);
+    console.log(`🤖 Calling Claude API (${model})...`);
+    
     try {
-      console.log(`Calling Claude API (${request.model})...`);
+      const requestBody = {
+        model,
+        max_tokens: maxTokens,
+        messages,
+        thinking
+      };
       
       // Log request size for debugging
-      const requestSize = JSON.stringify(request).length;
-      console.log(`Request size: ${(requestSize / 1024).toFixed(2)} KB`);
+      const requestSize = JSON.stringify(requestBody).length / 1024;
+      console.log(`📦 Request size: ${requestSize.toFixed(2)} KB`);
       
-      // Make direct axios call to the Supabase function URL
-      const response = await axios.post(this.proxyUrl, request);
-      
-      // Check if response is valid
-      if (!response.data) {
-        throw new Error('Empty response from Claude API');
+      if (requestSize > 100) {
+        console.warn(`⚠️ Large request size (${requestSize.toFixed(2)} KB) may cause issues`);
       }
       
-      // Log token usage metrics if available
-      if (response.data?.usage) {
-        const usage = response.data.usage;
-        if (usage.cached_tokens) {
-          console.log(`Cache metrics - Cached tokens: ${usage.cached_tokens}`);
-        }
-        console.log(`Token usage - Input: ${usage.input_tokens}, Output: ${usage.output_tokens}`);
-        
-        // Log thinking tokens if available
-        if (response.data.thinking?.thinking_tokens) {
-          console.log(`Thinking tokens used: ${response.data.thinking.thinking_tokens}`);
-        }
+      // Make the API call through the Supabase function proxy
+      const response = await axios.post(this.proxyUrl, requestBody);
+      
+      // Extract the response data
+      const data = response.data;
+      
+      // Calculate token usage and cost
+      const inputTokens = data.usage.input_tokens;
+      const outputTokens = data.usage.output_tokens;
+      const cacheSavings = this.calculateCacheSavings(data.usage);
+      
+      const inputCost = (inputTokens / 1000000) * modelConfig.costPerInputMToken;
+      const outputCost = (outputTokens / 1000000) * modelConfig.costPerOutputMToken;
+      const totalCost = inputCost + outputCost;
+      
+      console.log(`📊 Token usage - Input: ${inputTokens}, Output: ${outputTokens}`);
+      if (cacheSavings > 0) {
+        console.log(`💰 Cache savings: ${cacheSavings} tokens (${(cacheSavings / inputTokens * 100).toFixed(1)}% of input)`);
+      }
+      console.log(`💵 Cost: $${totalCost.toFixed(6)} ($${inputCost.toFixed(6)} input + $${outputCost.toFixed(6)} output)`);
+      
+      // Extract the response content
+      const responseContent = data.content[0].text;
+      
+      // Get thinking process if available
+      const thinkingProcess = data.content.find((c: any) => c.type === 'thinking')?.thinking;
+      if (thinkingProcess) {
+        console.log(`🧠 Received thinking process (${thinkingProcess.length} characters)`);
       }
       
-      return response.data;
+      // Return the formatted response
+      return {
+        content: data.content,
+        usage: {
+          input_tokens: inputTokens,
+          output_tokens: outputTokens,
+          cache_creation_input_tokens: data.usage.cache_creation_input_tokens,
+          cache_read_input_tokens: data.usage.cache_read_input_tokens
+        }
+      };
     } catch (error) {
-      console.error('Error calling Claude API:', error);
+      console.error('❌ Error calling Claude API:', error);
       
-      // Extract detailed error information if available
-      let errorMessage = 'Unknown error';
-      if (error.response?.data?.error) {
-        errorMessage = error.response.data.error;
-      } else if (error.response?.data?.details) {
-        errorMessage = error.response.data.details;
-      } else if (error.response?.status) {
-        errorMessage = `HTTP ${error.response.status}: ${error.response.statusText}`;
-      } else if (error instanceof Error) {
-        errorMessage = error.message;
+      // Extract error details for better debugging
+      if (axios.isAxiosError(error) && error.response) {
+        console.error(`❌ Status: ${error.response.status}`);
+        console.error(`❌ Response data:`, error.response.data);
       }
       
-      // Log more details for debugging
-      console.error('Error details:', {
-        status: error.response?.status,
-        statusText: error.response?.statusText,
-        data: error.response?.data
-      });
-      
-      throw new Error(`Claude API error: ${errorMessage}`);
+      throw new Error(`Failed to call Claude API: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
-  
+
   /**
-   * Calculate token usage and cost
-   * @param usage Token usage from API response
-   * @param model Model configuration
-   * @returns Token usage and cost
+   * Get the model configuration for the given model name
+   * @param model Model name
+   * @returns Model configuration
    */
-  calculateTokenUsage(usage: any, model: ModelConfig): TokenUsage {
-    // Default to zero if usage is not available
-    const inputTokens = usage?.input_tokens || 0;
-    const outputTokens = usage?.output_tokens || 0;
-    
-    // Calculate costs
-    const inputCost = (inputTokens / 1000000) * model.costPerInputMToken;
-    const outputCost = (outputTokens / 1000000) * model.costPerOutputMToken;
-    const totalCost = inputCost + outputCost;
-    
-    // Calculate cache savings if applicable
-    let cacheSavings = 0;
-    if (usage?.cached_tokens) {
-      const cachedInputCost = (usage.cached_tokens / 1000000) * model.costPerInputMToken;
-      cacheSavings = cachedInputCost;
-    }
-    
-    return {
-      input: inputTokens,
-      output: outputTokens,
-      cost: totalCost,
-      cacheSavings: cacheSavings > 0 ? cacheSavings : undefined
-    };
+  private getModelConfig(model: string): ModelConfig {
+    return this.MODELS[model];
+  }
+
+  /**
+   * Calculate cache savings from the given usage data
+   * @param usage Usage data
+   * @returns Cache savings
+   */
+  private calculateCacheSavings(usage: any): number {
+    return usage.cached_tokens || 0;
   }
 }
 

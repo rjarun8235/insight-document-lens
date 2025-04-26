@@ -9,7 +9,10 @@ import {
   ProcessingOptions,
   ProcessingResult
 } from '../types/app-types';
-import { optimizedDocumentService } from './optimized-document-service';
+import OptimizedDocumentService from './optimized-document-service';
+
+// Create an instance of the optimized document service
+const optimizedDocumentService = new OptimizedDocumentService();
 
 /**
  * DocLens Service
@@ -21,13 +24,12 @@ export class DocLensService {
    */
   async processDocuments(
     documents: ParsedDocument[], 
-    comparisonType: string, 
-    options: ProcessingOptions
+    options: ProcessingOptions = {}
   ): Promise<ProcessingResult> {
-    console.log('🚀 Starting DocLens document processing pipeline');
+    console.log(' Starting DocLens document processing pipeline');
     
     // Process documents with the optimized document service
-    return await optimizedDocumentService.processDocuments(documents, comparisonType, options);
+    return await optimizedDocumentService.processDocuments(documents, options);
   }
 }
 
