@@ -113,17 +113,17 @@ const CustomTabsContent = ({ value, className, children }: {
 };
 
 export function ComparisonView({ result, documentNames }: ComparisonViewProps) {
-  const [activeTab, setActiveTab] = useState('tables');
-  const [expandedSection, setExpandedSection] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState('analysis'); // Default to analysis tab
+  const [expandedSection, setExpandedSection] = useState<string | null>('analysis'); // Expand analysis by default
   
   // Extract sections from the result
   const sections = [
-    { id: 'verification', title: 'Verification', content: result.verification || '' },
-    { id: 'validation', title: 'Validation', content: result.validation || '' },
-    { id: 'review', title: 'Review', content: result.review || '' },
     { id: 'analysis', title: 'Analysis', content: result.analysis || '' },
     { id: 'summary', title: 'Summary', content: result.summary || '' },
     { id: 'insights', title: 'Insights', content: result.insights || '' },
+    { id: 'verification', title: 'Verification', content: result.verification || '' },
+    { id: 'validation', title: 'Validation', content: result.validation || '' },
+    { id: 'review', title: 'Review', content: result.review || '' },
     { id: 'recommendations', title: 'Recommendations', content: result.recommendations || '' },
     { id: 'risks', title: 'Risks', content: result.risks || '' },
     { id: 'issues', title: 'Issues', content: result.issues || '' }

@@ -2,13 +2,15 @@ import { useState, useEffect } from 'react';
 import { DocumentFile, ComparisonResult, ParsedDocument } from '../lib/types';
 import { FileUpload } from './FileUpload';
 import { parseDocument } from '../lib/parsers';
-import TSVService from '../services/tsv-service';
+import DocLensService from '../services/tsv-service';
 import { Button } from '../components/ui/custom-button';
 import { ComparisonView } from './ComparisonView';
-import { LoadingIndicator, LoadingOverlay } from './ui/loading-indicator';
+import { LoadingIndicator } from './ui/loading-indicator';
+import ModernLoading from './ui/modern-loading';
+import Header from './Header';
 
-// Initialize the TSV service
-const tsvService = new TSVService();
+// Initialize the DocLens service
+const docLensService = new DocLensService();
 
 // Available comparison types
 const comparisonTypes = [
@@ -46,7 +48,7 @@ export function DocumentProcessor() {
 
   // Set document title
   useEffect(() => {
-    document.title = "TSV Global - Document Intelligence";
+    document.title = "DocLens";
   }, []);
 
   // Auto-detect appropriate comparison type based on file types
@@ -192,23 +194,23 @@ export function DocumentProcessor() {
         const useValidation = true;
         
         // Stage 1: Extraction
-        setProcessingStage('Stage 1/3: Extracting data from documents...');
+        setProcessingStage('Stage 1/3: Extracting document data with DocLens AI...');
         setProcessingProgress(30);
         
         // Stage 2: Analysis
         setTimeout(() => {
-          setProcessingStage('Stage 2/3: Analyzing extracted data...');
+          setProcessingStage('Stage 2/3: Analyzing document content with DocLens AI...');
           setProcessingProgress(60);
         }, 2000);
         
         // Stage 3: Validation
         setTimeout(() => {
-          setProcessingStage('Stage 3/3: Validating analysis with extended thinking...');
+          setProcessingStage('Stage 3/3: Validating analysis with DocLens AI reasoning...');
           setProcessingProgress(80);
         }, 4000);
         
-        // Call the TSV service
-        const result = await tsvService.processDocuments(
+        // Call the DocLens service
+        const result = await docLensService.processDocuments(
           parsed,
           comparisonType,
           {
@@ -257,7 +259,7 @@ export function DocumentProcessor() {
       const instruction = `Based on the previous comparison of documents, please answer this follow-up question: ${followUpQuestion}`;
       
       // Use the same documents but with the new instruction
-      const response = await tsvService.analyzeDocuments(parsedDocuments, instruction);
+      const response = await docLensService.analyzeDocuments(parsedDocuments, instruction);
       
       // Extract the result and token usage
       const { result, tokenUsage } = response;
@@ -279,6 +281,7 @@ export function DocumentProcessor() {
 
   return (
     <div className="document-processor space-y-8">
+      <Header />
       {/* File Upload Section */}
       <div className="file-upload-section">
         <FileUpload onFilesSelected={handleFilesSelected} />
@@ -314,8 +317,8 @@ export function DocumentProcessor() {
         
         {/* Processing Status */}
         {isProcessing && (
-          <LoadingOverlay 
-            text={processingStage || 'Processing documents with TSV Document Intelligence...'} 
+          <ModernLoading 
+            text={processingStage || 'Processing documents with DocLens AI...'} 
             showProgress={true}
             progress={processingProgress} 
           />
@@ -323,9 +326,10 @@ export function DocumentProcessor() {
         
         {/* Follow-up Question Loading */}
         {isAskingFollowUp && (
-          <LoadingOverlay 
+          <ModernLoading 
             text={processingStage || 'Analyzing your follow-up question...'} 
             showProgress={false}
+            progress={50} 
           />
         )}
         
@@ -411,7 +415,7 @@ export function DocumentProcessor() {
             {/* Token Usage Information */}
             {tokenUsage && (
               <div className="mt-4 p-3 bg-gray-50 border rounded-md text-sm">
-                <h4 className="font-medium mb-1">API Usage Information</h4>
+                <h4 className="font-medium mb-1">DocLens API Usage Information</h4>
                 <div className="grid grid-cols-3 gap-2">
                   <div>
                     <p className="text-gray-600">Input Tokens</p>
@@ -427,7 +431,7 @@ export function DocumentProcessor() {
                   </div>
                 </div>
                 <p className="text-xs text-gray-500 mt-2">
-                  Cost estimate based on TSV API pricing.
+                  Cost estimate based on DocLens API pricing.
                 </p>
               </div>
             )}

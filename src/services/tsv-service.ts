@@ -1,5 +1,5 @@
 /**
- * TSV Global Solutions Document Intelligence Service
+ * DocLens - Intelligent Document Analysis & Comparison
  * 
  * This service powers TSV Global's advanced document processing capabilities,
  * providing intelligent analysis and comparison of logistics documents.
@@ -13,9 +13,9 @@ import { ParsedDocument, ComparisonResult } from '../lib/types';
 const multiStageService = new TSVDocumentIntelligenceService();
 const baseService = new ClaudeService();
 
-export default class TSVService {
+export default class DocLensService {
   /**
-   * Process documents using TSV Global's advanced 3-stage pipeline
+   * Process documents using DocLens advanced 3-stage pipeline
    * 
    * @param documents Array of parsed documents to process
    * @param comparisonType Type of comparison to perform
@@ -31,7 +31,7 @@ export default class TSVService {
       useExtendedOutput?: boolean;
     } = {}
   ) {
-    console.log('🚀 Starting TSV Global multi-stage document processing pipeline');
+    console.log('🚀 Starting DocLens multi-stage document processing pipeline');
     return await multiStageService.processDocuments(documents, comparisonType, options);
   }
 
@@ -50,16 +50,16 @@ export default class TSVService {
   }
 
   /**
-   * Get the name of the TSV Global AI agent
+   * Get the name of the DocLens AI agent
    * 
    * @returns Name of the AI agent
    */
   getAgentName(): string {
-    return 'TSV Document Intelligence';
+    return 'DocLens';
   }
 
   /**
-   * Get the version of the TSV Global AI agent
+   * Get the version of the DocLens AI agent
    * 
    * @returns Version string
    */

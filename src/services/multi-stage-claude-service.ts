@@ -715,92 +715,94 @@ IMPORTANT:
   }
   
   /**
-   * Process Claude response into a structured ComparisonResult
+   * Process Claude's response into a structured format
    */
-  private processClaudeResponse(contentText: string): ComparisonResult {
-    try {
-      // Initialize the result object
-      const result: ComparisonResult = {
-        tables: [],
-      };
-      
-      // Extract tables from the response
-      // Look for markdown tables (starting with | and having header separator row)
-      const markdownTableRegex = /\|[^\n]+\|\n\|[\s-:]+\|\n(\|[^\n]+\|\n)+/g;
-      let mdTableMatch;
-      while ((mdTableMatch = markdownTableRegex.exec(contentText)) !== null) {
-        const tableContent = mdTableMatch[0].trim();
-        const table = this.parseMarkdownTable(tableContent);
-        if (table) {
-          result.tables.push(table);
-        }
-      }
-      
-      // Extract sections using markdown header format (### Section Name)
-      const markdownSectionRegex = /###\s+(.*?)\s*\n+(?:<quotes>([\s\S]*?)<\/quotes>\s*\n+)?(?:<analysis>([\s\S]*?)<\/analysis>|([^#<][\s\S]*?)(?=\n+###|\n*$))/g;
-      
-      let mdSectionMatch;
-      while ((mdSectionMatch = markdownSectionRegex.exec(contentText)) !== null) {
-        const sectionName = mdSectionMatch[1].toLowerCase().trim();
-        // If quotes/analysis tags are used
-        let quotes = mdSectionMatch[2]?.trim() || '';
-        let analysis = mdSectionMatch[3]?.trim() || mdSectionMatch[4]?.trim() || '';
+  private processClaudeResponse(text: string): ComparisonResult {
+    // Initialize result structure
+    const result: ComparisonResult = {
+      tables: [],
+    };
+    
+    // Extract tables from markdown
+    const tableMatches = text.match(/\n\|[^\n]+\|[^\n]+\n\|[\s-:]+\|/g);
+    if (tableMatches) {
+      tableMatches.forEach(tableMatch => {
+        const tableStartIndex = text.indexOf(tableMatch);
+        let tableEndIndex = text.indexOf('\n\n', tableStartIndex + tableMatch.length);
+        if (tableEndIndex === -1) tableEndIndex = text.length;
         
-        // If no quotes tag but we can identify quotes by quotation marks
-        if (!quotes && analysis) {
-          const extractedQuotes = [];
-          // Extract text in quotation marks
-          const quoteRegex = /"([^"]+)"/g;
-          let quoteMatch;
-          while ((quoteMatch = quoteRegex.exec(analysis)) !== null) {
-            extractedQuotes.push(quoteMatch[1]);
-          }
-          
-          if (extractedQuotes.length > 0) {
-            quotes = extractedQuotes.join('\n');
-            // Remove the quotes from the analysis text
-            analysis = analysis.replace(/"([^"]+)"/g, '').replace(/\n\s*\n+/g, '\n\n').trim();
+        const tableText = text.substring(tableStartIndex, tableEndIndex);
+        const parsedTable = this.parseMarkdownTable(tableText);
+        
+        // Find table title (heading before the table)
+        let titleStartIndex = text.lastIndexOf('\n##', tableStartIndex);
+        if (titleStartIndex === -1) titleStartIndex = text.lastIndexOf('\n#', tableStartIndex);
+        
+        if (titleStartIndex !== -1) {
+          const titleEndIndex = text.indexOf('\n', titleStartIndex + 1);
+          if (titleEndIndex !== -1 && titleEndIndex < tableStartIndex) {
+            const titleText = text.substring(titleStartIndex, titleEndIndex).trim().replace(/^#+\s+/, '');
+            parsedTable.title = titleText;
           }
         }
         
-        // Format the section with quotes and analysis
-        result[sectionName] = `<quotes>${quotes}</quotes>\n\n<analysis>${analysis}</analysis>`;
-      }
-      
-      // Check if we have any sections, if not try to extract from plain text
-      const sectionNames = ['verification', 'validation', 'review', 'analysis', 'summary', 
-                           'insights', 'recommendations', 'risks', 'issues'];
-      
-      let hasSections = false;
-      for (const name of sectionNames) {
-        if (result[name]) {
-          hasSections = true;
-          break;
+        if (!parsedTable.title) {
+          parsedTable.title = 'Comparison Table';
         }
-      }
-      
-      if (!hasSections) {
-        // Try to find sections by looking for headers
-        for (const name of sectionNames) {
-          const headerRegex = new RegExp(`(?:^|\\n+)(?:##?#?\\s*${name}|${name.charAt(0).toUpperCase() + name.slice(1)})\\s*(?:\\n+|:)([\\s\\S]*?)(?=\\n+(?:##?#?|[A-Z][a-z]+:)|$)`, 'i');
-          const match = headerRegex.exec(contentText);
-          if (match) {
-            const content = match[1].trim();
-            result[name.toLowerCase()] = `<quotes></quotes>\n\n<analysis>${content}</analysis>`;
-          }
-        }
-      }
-      
-      return result;
-    } catch (error) {
-      console.error('Error processing Claude response:', error);
-      
-      // Return a minimal result to avoid breaking the UI
-      return {
-        tables: [],
-        analysis: `Error processing Claude response: ${error instanceof Error ? error.message : 'Unknown error'}`
-      };
+        
+        result.tables.push(parsedTable);
+      });
     }
+    
+    // Extract analysis sections using XML tags if present
+    const extractXmlContent = (tag: string): string | undefined => {
+      const regex = new RegExp(`<${tag}>(.*?)</${tag}>`, 's');
+      const match = text.match(regex);
+      return match ? match[1].trim() : undefined;
+    };
+    
+    // Extract analysis sections using markdown headings if no XML tags
+    const extractHeadingContent = (heading: string): string | undefined => {
+      const headingRegex = new RegExp(`##\\s+${heading}\\s*\n(.*?)(?=\n##\\s+|$)`, 's');
+      const match = text.match(headingRegex);
+      return match ? match[1].trim() : undefined;
+    };
+    
+    // Try to extract content using both methods and use whichever works
+    const extractSection = (section: string, tag?: string): string | undefined => {
+      const xmlContent = tag ? extractXmlContent(tag) : undefined;
+      const headingContent = extractHeadingContent(section);
+      
+      return xmlContent || headingContent;
+    };
+    
+    // Extract quotes and analysis from XML tags
+    const quotesMatch = text.match(/<quotes>(.*?)<\/quotes>/s);
+    const analysisMatch = text.match(/<analysis>(.*?)<\/analysis>/s);
+    
+    // Extract various sections
+    result.verification = extractSection('Verification', 'verification');
+    result.validation = extractSection('Validation', 'validation');
+    result.review = extractSection('Review', 'review');
+    result.analysis = analysisMatch ? analysisMatch[1].trim() : extractSection('Analysis', 'analysis');
+    result.summary = extractSection('Summary', 'summary');
+    result.insights = extractSection('Insights', 'insights');
+    result.recommendations = extractSection('Recommendations', 'recommendations');
+    result.risks = extractSection('Risks', 'risks');
+    result.issues = extractSection('Issues', 'issues');
+    
+    // If we have Claude's thinking process, add it as a special section
+    if (text.includes("Let me analyze what I'm being asked to do here") || 
+        text.includes("I'm given the task of validating")) {
+      result.analysis = result.analysis || text.trim();
+    }
+    
+    // If no sections were found but we have text, use it as the analysis
+    if (!result.analysis && !result.summary && !result.insights && text.trim()) {
+      result.analysis = text.trim();
+    }
+    
+    return result;
   }
   
   /**
