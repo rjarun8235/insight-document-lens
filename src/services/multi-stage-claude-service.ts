@@ -492,7 +492,7 @@ IMPORTANT:
     const apiParams: any = {
       model: MODELS.VALIDATION.name,
       max_tokens: MODELS.VALIDATION.maxTokens,
-      temperature: MODELS.VALIDATION.temperature,
+      temperature: 1.0, // Must be exactly 1.0 when using thinking
       messages: [
         {
           role: 'user',
@@ -514,10 +514,10 @@ IMPORTANT:
       };
     }
     
-    // Add extended output if requested
+    // Add extended output if requested - without using unsupported betas parameter
     if (useExtendedOutput) {
-      apiParams.betas = ["output-128k-2025-02-19"];
-      apiParams.max_tokens = 64000; // Increase max tokens for extended output
+      // Increase max tokens for extended output, but stay within model limits
+      apiParams.max_tokens = Math.min(64000, MODELS.VALIDATION.maxTokens);
     }
     
     // Call Claude API for validation
