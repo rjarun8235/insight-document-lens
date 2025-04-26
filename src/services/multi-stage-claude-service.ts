@@ -20,14 +20,14 @@ const MODELS = {
   },
   ANALYSIS: {
     name: 'claude-3-5-sonnet-20241022',
-    maxTokens: 8000,
+    maxTokens: 4000,
     temperature: 0.2,
     costPerInputMToken: 3.00,
     costPerOutputMToken: 15.00
   },
   VALIDATION: {
     name: 'claude-3-7-sonnet-20250219',
-    maxTokens: 16000,
+    maxTokens: 8000,
     temperature: 0.1,
     costPerInputMToken: 3.00,
     costPerOutputMToken: 15.00,
@@ -223,7 +223,7 @@ IMPORTANT:
       ]
     });
     
-    // Parse the extraction result
+    // Process the extraction result
     try {
       const contentText = extractionResponse.content?.[0]?.text || '';
       
@@ -234,61 +234,92 @@ IMPORTANT:
                         contentText.match(/```js\n([\s\S]*?)\n```/) ||
                         contentText.match(/{[\s\S]*"documentData"[\s\S]*"documentTypes"[\s\S]*"extractedFields"[\s\S]*}/);
       
+      let extractedData;
+      
       if (!jsonMatch) {
-        console.error('Failed to extract JSON. Raw response:', contentText);
-        throw new Error('Failed to extract JSON from Claude response');
-      }
-      
-      let jsonText = jsonMatch[1] || jsonMatch[0];
-      
-      // Clean up the JSON text - remove any markdown artifacts or extra text
-      jsonText = jsonText.trim();
-      
-      // If the JSON doesn't start with {, try to find the first { and extract from there
-      if (!jsonText.startsWith('{')) {
-        const startIndex = jsonText.indexOf('{');
-        if (startIndex >= 0) {
-          jsonText = jsonText.substring(startIndex);
-        }
-      }
-      
-      // If the JSON doesn't end with }, try to find the last } and extract up to there
-      if (!jsonText.endsWith('}')) {
-        const endIndex = jsonText.lastIndexOf('}');
-        if (endIndex >= 0) {
-          jsonText = jsonText.substring(0, endIndex + 1);
-        }
-      }
-      
-      try {
-        const extractedData = JSON.parse(jsonText);
+        console.warn('Failed to extract JSON. Creating fallback structure. Raw response:', contentText);
         
-        // Validate the extracted data has the required structure
-        if (!extractedData.documentData || !Array.isArray(extractedData.documentData) || 
-            !extractedData.documentTypes || !Array.isArray(extractedData.documentTypes) ||
-            !extractedData.extractedFields || typeof extractedData.extractedFields !== 'object') {
-          throw new Error('Extracted JSON does not have the required structure');
-        }
-        
-        // Calculate token usage cost
-        const tokenUsage = {
-          input: extractionResponse.usage?.input_tokens || 0,
-          output: extractionResponse.usage?.output_tokens || 0,
-          cost: (
-            ((extractionResponse.usage?.input_tokens || 0) / 1000000) * MODELS.EXTRACTION.costPerInputMToken +
-            ((extractionResponse.usage?.output_tokens || 0) / 1000000) * MODELS.EXTRACTION.costPerOutputMToken
-          )
+        // Create a fallback structure based on the documents
+        extractedData = {
+          documentData: documents.map((doc, index) => {
+            const fileName = doc.image?.name || `document_${index + 1}`;
+            const docType = this.guessDocumentType(fileName);
+            
+            return {
+              documentIndex: index + 1,
+              documentType: docType,
+              fileName: fileName,
+              fields: {
+                "Document Type": docType,
+                "File Name": fileName,
+                "Note": "Document content could not be extracted. Please ensure the PDF contains readable text."
+              }
+            };
+          }),
+          documentTypes: documents.map((doc, index) => {
+            const fileName = doc.image?.name || `document_${index + 1}`;
+            return this.guessDocumentType(fileName);
+          }),
+          extractedFields: {
+            "Document Type": documents.map((doc, index) => {
+              const fileName = doc.image?.name || `document_${index + 1}`;
+              return this.guessDocumentType(fileName);
+            }),
+            "File Name": documents.map(doc => doc.image?.name || "Unknown")
+          }
         };
+      } else {
+        let jsonText = jsonMatch[1] || jsonMatch[0];
         
-        return {
-          ...extractedData,
-          rawText: contentText,
-          tokenUsage
-        };
-      } catch (parseError) {
-        console.error('JSON parse error:', parseError, 'for text:', jsonText);
-        throw new Error(`Failed to parse JSON: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`);
+        // Clean up the JSON text - remove any markdown artifacts or extra text
+        jsonText = jsonText.trim();
+        
+        // If the JSON doesn't start with {, try to find the first { and extract from there
+        if (!jsonText.startsWith('{')) {
+          const startIndex = jsonText.indexOf('{');
+          if (startIndex >= 0) {
+            jsonText = jsonText.substring(startIndex);
+          }
+        }
+        
+        // If the JSON doesn't end with }, try to find the last } and extract up to there
+        if (!jsonText.endsWith('}')) {
+          const endIndex = jsonText.lastIndexOf('}');
+          if (endIndex >= 0) {
+            jsonText = jsonText.substring(0, endIndex + 1);
+          }
+        }
+        
+        try {
+          extractedData = JSON.parse(jsonText);
+          
+          // Validate the extracted data has the required structure
+          if (!extractedData.documentData || !Array.isArray(extractedData.documentData) || 
+              !extractedData.documentTypes || !Array.isArray(extractedData.documentTypes) ||
+              !extractedData.extractedFields || typeof extractedData.extractedFields !== 'object') {
+            throw new Error('Extracted JSON does not have the required structure');
+          }
+        } catch (parseError) {
+          console.error('JSON parse error:', parseError, 'for text:', jsonText);
+          throw new Error(`Failed to parse JSON: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`);
+        }
       }
+      
+      // Calculate token usage cost
+      const tokenUsage = {
+        input: extractionResponse.usage?.input_tokens || 0,
+        output: extractionResponse.usage?.output_tokens || 0,
+        cost: (
+          ((extractionResponse.usage?.input_tokens || 0) / 1000000) * MODELS.EXTRACTION.costPerInputMToken +
+          ((extractionResponse.usage?.output_tokens || 0) / 1000000) * MODELS.EXTRACTION.costPerOutputMToken
+        )
+      };
+      
+      return {
+        ...extractedData,
+        rawText: contentText,
+        tokenUsage
+      };
     } catch (error) {
       console.error('Error parsing extraction result:', error);
       throw new Error(`Failed to parse extraction result: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -734,49 +765,45 @@ IMPORTANT:
       score += 0.1;
     }
     
-    // Check if we have all expected sections
-    const expectedSections = ['verification', 'validation', 'analysis', 'summary'];
-    const hasSections = expectedSections.every(section => !!validatedResult[section]);
-    if (hasSections) {
+    // Check if we have analysis sections
+    const sections = ['verification', 'validation', 'review', 'analysis', 'summary', 
+                     'insights', 'recommendations', 'risks', 'issues'];
+    
+    for (const section of sections) {
+      if (validatedResult[section]) {
+        score += 0.05;
+      }
+    }
+    
+    // Check if we found discrepancies
+    if (validatedResult.analysis && validatedResult.analysis.includes('discrep')) {
       score += 0.1;
     }
     
-    // Check if quotes are present in sections
-    let quotesFound = 0;
-    let sectionsWithQuotes = 0;
+    // Cap the score at 0.95 - never be 100% confident
+    return Math.min(score, 0.95);
+  }
+
+  /**
+   * Guess the document type based on the file name
+   */
+  private guessDocumentType(fileName: string): string {
+    fileName = fileName.toLowerCase();
     
-    expectedSections.forEach(section => {
-      if (validatedResult[section]) {
-        sectionsWithQuotes++;
-        const sectionText = validatedResult[section] as string;
-        if (sectionText.includes('<quotes>') && !sectionText.includes('<quotes></quotes>')) {
-          quotesFound++;
-        }
-      }
-    });
-    
-    if (quotesFound > 0) {
-      score += 0.1 * (quotesFound / sectionsWithQuotes);
+    if (fileName.includes('invoice') || fileName.includes('inv-') || fileName.includes('inv_')) {
+      return 'Invoice';
+    } else if (fileName.includes('po') || fileName.includes('purchase') || fileName.includes('order')) {
+      return 'Purchase Order';
+    } else if (fileName.includes('bl') || fileName.includes('lading') || fileName.includes('bill of')) {
+      return 'Bill of Lading';
+    } else if (fileName.includes('packing') || fileName.includes('pl-') || fileName.includes('pl_')) {
+      return 'Packing List';
+    } else if (fileName.includes('manifest')) {
+      return 'Manifest';
+    } else if (fileName.includes('delivery') || fileName.includes('do-') || fileName.includes('do_')) {
+      return 'Delivery Order';
+    } else {
+      return 'Unknown Document';
     }
-    
-    // Check if extracted field names appear in the validation
-    const extractedFieldNames = Object.keys(extractionResult.extractedFields);
-    let fieldsFound = 0;
-    
-    // Convert validation result to string for searching
-    const validationText = JSON.stringify(validatedResult);
-    
-    extractedFieldNames.forEach(field => {
-      if (validationText.includes(field)) {
-        fieldsFound++;
-      }
-    });
-    
-    if (fieldsFound > 0) {
-      score += 0.2 * (fieldsFound / extractedFieldNames.length);
-    }
-    
-    // Cap score between 0 and 1
-    return Math.max(0, Math.min(1, score));
   }
 }

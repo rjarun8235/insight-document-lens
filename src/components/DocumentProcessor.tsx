@@ -25,9 +25,7 @@ const comparisonTypes = [
 
 // Processing modes
 const processingModes = [
-  { value: 'standard', label: 'Standard (Single Stage)' },
-  { value: 'multi-stage', label: 'Multi-Stage Pipeline' },
-  { value: 'advanced', label: 'Advanced with Validation' }
+  { value: 'advanced', label: 'Advanced 3-Stage Pipeline' }
 ];
 
 export function DocumentProcessor() {
@@ -43,8 +41,8 @@ export function DocumentProcessor() {
   const [tokenUsage, setTokenUsage] = useState<{input: number, output: number, cost: number} | null>(null);
   const [processingStage, setProcessingStage] = useState<string>('');
   const [comparisonType, setComparisonType] = useState<string>('logistics');
-  const [processingMode, setProcessingMode] = useState<string>('standard');
-  const [showThinking, setShowThinking] = useState<boolean>(false);
+  const [processingMode, setProcessingMode] = useState<string>('advanced');
+  const [showThinking, setShowThinking] = useState<boolean>(true);
   const [thinkingProcess, setThinkingProcess] = useState<string | null>(null);
   const [stageResults, setStageResults] = useState<any | null>(null);
 
@@ -186,22 +184,9 @@ export function DocumentProcessor() {
       setDocumentNames(docNames);
       
       // Process based on selected mode
-      if (processingMode === 'standard') {
-        // Standard single-stage processing
-        setProcessingStage('Analyzing documents with Claude AI...');
-        setProcessingProgress(30);
-        
-        const instruction = prepareInstructions(comparisonType);
-        const response = await claudeService.analyzeDocuments(parsed, instruction);
-        
-        setComparisonResult(response.result);
-        setTokenUsage(response.tokenUsage);
-        setProcessingProgress(100);
-        setProcessingStage('Analysis complete!');
-      } 
-      else {
-        // Multi-stage or advanced processing
-        const useValidation = processingMode === 'advanced';
+      if (processingMode === 'advanced') {
+        // Advanced 3-stage processing
+        const useValidation = true;
         
         // Stage 1: Extraction
         setProcessingStage('Stage 1/3: Extracting data from documents...');
@@ -213,13 +198,11 @@ export function DocumentProcessor() {
           setProcessingProgress(60);
         }, 2000);
         
-        // Stage 3: Validation (if advanced mode)
-        if (useValidation) {
-          setTimeout(() => {
-            setProcessingStage('Stage 3/3: Validating analysis with extended thinking...');
-            setProcessingProgress(80);
-          }, 4000);
-        }
+        // Stage 3: Validation
+        setTimeout(() => {
+          setProcessingStage('Stage 3/3: Validating analysis with extended thinking...');
+          setProcessingProgress(80);
+        }, 4000);
         
         // Call the multi-stage service
         const multiStageResult = await multiStageClaudeService.processDocuments(
@@ -318,28 +301,7 @@ export function DocumentProcessor() {
             </select>
           </div>
           
-          <div>
-            <label htmlFor="processing-mode" className="block text-sm font-medium text-gray-700 mb-1">
-              Processing Mode:
-            </label>
-            <select
-              id="processing-mode"
-              value={processingMode}
-              onChange={(e) => setProcessingMode(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary focus:border-primary"
-              disabled={isProcessing}
-            >
-              {processingModes.map((mode) => (
-                <option key={mode.value} value={mode.value}>
-                  {mode.label}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-        
-        {/* Advanced Options */}
-        {processingMode === 'advanced' && (
+          {/* Advanced Options */}
           <div className="mt-4 p-3 border border-gray-200 rounded-md bg-gray-50">
             <h3 className="text-sm font-medium text-gray-700 mb-2">Advanced Options:</h3>
             <div className="flex items-center">
@@ -356,7 +318,7 @@ export function DocumentProcessor() {
               </label>
             </div>
           </div>
-        )}
+        </div>
         
         {/* Compare Button */}
         <div className="mt-4">
@@ -448,21 +410,19 @@ export function DocumentProcessor() {
                     </div>
                   </div>
                   
-                  {/* Stage 3: Validation (if available) */}
-                  {stageResults.validation && (
-                    <div className="p-3 border rounded-md">
-                      <h4 className="font-medium text-sm mb-1 flex items-center">
-                        <span className="bg-purple-100 text-purple-800 text-xs font-medium mr-2 px-2 py-0.5 rounded">Stage 3</span>
-                        Validation
-                      </h4>
-                      <div className="text-sm">
-                        <p><span className="font-medium">Input Tokens:</span> {stageResults.validation.tokenUsage.input.toLocaleString()}</p>
-                        <p><span className="font-medium">Output Tokens:</span> {stageResults.validation.tokenUsage.output.toLocaleString()}</p>
-                        <p><span className="font-medium">Cost:</span> ${stageResults.validation.tokenUsage.cost.toFixed(6)}</p>
-                        <p><span className="font-medium">Confidence:</span> {(stageResults.validation.confidence * 100).toFixed(1)}%</p>
-                      </div>
+                  {/* Stage 3: Validation */}
+                  <div className="p-3 border rounded-md">
+                    <h4 className="font-medium text-sm mb-1 flex items-center">
+                      <span className="bg-purple-100 text-purple-800 text-xs font-medium mr-2 px-2 py-0.5 rounded">Stage 3</span>
+                      Validation
+                    </h4>
+                    <div className="text-sm">
+                      <p><span className="font-medium">Input Tokens:</span> {stageResults.validation.tokenUsage.input.toLocaleString()}</p>
+                      <p><span className="font-medium">Output Tokens:</span> {stageResults.validation.tokenUsage.output.toLocaleString()}</p>
+                      <p><span className="font-medium">Cost:</span> ${stageResults.validation.tokenUsage.cost.toFixed(6)}</p>
+                      <p><span className="font-medium">Confidence:</span> {(stageResults.validation.confidence * 100).toFixed(1)}%</p>
                     </div>
-                  )}
+                  </div>
                 </div>
               </div>
             )}
