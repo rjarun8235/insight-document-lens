@@ -228,11 +228,21 @@ export const parsePDF = async (file: File): Promise<ParsedDocument> => {
       throw new Error('Invalid PDF file format');
     }
     
+    // Convert PDF to base64
+    const arrayBuffer = await file.arrayBuffer();
+    const base64Data = btoa(
+      new Uint8Array(arrayBuffer)
+        .reduce((data, byte) => data + String.fromCharCode(byte), '')
+    );
+    
+    console.log(`Successfully encoded PDF: ${file.name} (${(base64Data.length / (1024 * 1024)).toFixed(2)}MB base64 data)`);
+    
     // For PDFs, we'll return the file to be processed by Claude's document capabilities
     return {
       image: file, // We use the image field to store the PDF file
       documentType: 'pdf',
-      text: `[PDF document: ${file.name}]`
+      text: `[PDF document: ${file.name}]`,
+      base64Data: base64Data
     };
   } catch (error) {
     console.error('Error parsing PDF:', error);

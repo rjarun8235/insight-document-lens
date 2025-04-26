@@ -67,12 +67,12 @@ interface MultiStageResult {
 }
 
 /**
- * Multi-stage Claude service that implements a three-stage pipeline:
+ * Multi-stage TSV Global service that implements a three-stage pipeline:
  * 1. Extraction: Extract raw data from documents
  * 2. Analysis: Structure data and perform initial analysis
  * 3. Validation: Validate results with extended thinking
  */
-export default class MultiStageClaudeService {
+export default class TSVDocumentIntelligenceService {
   private proxyUrl = 'https://cbrgpzdxttzlvvryysaf.supabase.co/functions/v1/claude-api-proxy';
 
   /**
@@ -150,18 +150,35 @@ export default class MultiStageClaudeService {
    * Stage 1: Extract data from documents
    */
   private async extractDocumentData(documents: ParsedDocument[]): Promise<ExtractionResult> {
-    // Prepare document text for the prompt
+    // Prepare document content for the prompt
     let documentTexts = '<documents>\n';
+    const documentContents: any[] = [];
+    
+    // First, add text content for each document
     documents.forEach((doc, index) => {
       documentTexts += `  <document index="${index + 1}">\n`;
       documentTexts += `    <source>${doc.documentType || 'unknown'}_document_${index + 1}</source>\n`;
       documentTexts += `    <document_content>\n${doc.text || '[No text content available]'}\n    </document_content>\n`;
       documentTexts += `  </document>\n`;
+      
+      // For PDF files, we'll also add them as document content blocks
+      if (doc.documentType === 'pdf' && doc.image) {
+        documentContents.push({
+          type: 'document',
+          source: {
+            type: 'base64',
+            media_type: 'application/pdf',
+            data: doc.base64Data || '[PDF data not available]'
+          }
+        });
+      }
     });
     documentTexts += '</documents>\n\n';
     
-    // Create extraction prompt
-    const extractionPrompt = `
+    // Add text instruction after document content blocks
+    documentContents.push({
+      type: 'text',
+      text: `
 You are a document data extraction specialist. Your task is to extract structured data from the provided documents.
 
 CRITICAL INSTRUCTION: ONLY extract information that is ACTUALLY PRESENT in the documents. NEVER generate placeholder data, fictional company names, or make assumptions about missing information.
@@ -199,29 +216,91 @@ Return the extracted data in this JSON format:
 
 IMPORTANT: 
 - Extract EVERY field and value present in the documents
-- Use the EXACT text as it appears in the documents
-- Never invent or assume information
-- Be thorough and comprehensive
-- Include ALL fields, even if they only appear in one document
-`;
-
-    // Call Claude API for extraction
-    const extractionResponse = await this.callClaudeApi({
+- Be precise and accurate with all extracted data
+- For logistics documents, pay special attention to:
+  * Consignee and Shipper information
+  * Invoice/PO/BL numbers
+  * Dates (issue date, shipping date, etc.)
+  * Product descriptions
+  * Quantities and units
+  * Prices and totals
+  * Package counts and weights
+  * Special instructions or notes
+- If you can't determine a document type, use "Unknown" and extract whatever fields are visible
+- If a document appears to be empty or unreadable, note this in your response
+`
+    });
+    
+    // Prepare API call
+    const apiParams: any = {
       model: MODELS.EXTRACTION.name,
       max_tokens: MODELS.EXTRACTION.maxTokens,
       temperature: MODELS.EXTRACTION.temperature,
       messages: [
         {
           role: 'user',
-          content: [
+          content: documentContents.length > 0 ? documentContents : [
             {
               type: 'text',
-              text: `${documentTexts}${extractionPrompt}`
+              text: documentTexts + `
+You are a document data extraction specialist. Your task is to extract structured data from the provided documents.
+
+CRITICAL INSTRUCTION: ONLY extract information that is ACTUALLY PRESENT in the documents. NEVER generate placeholder data, fictional company names, or make assumptions about missing information.
+
+For each document:
+1. Identify the document type (Invoice, Bill of Lading, Packing List, Purchase Order, etc.)
+2. Extract ALL key fields and their values exactly as they appear in the document
+3. For fields not present in a document, explicitly note "No data available"
+
+Return the extracted data in this JSON format:
+{
+  "documentData": [
+    {
+      "documentIndex": 1,
+      "documentType": "Invoice",
+      "fields": {
+        "Invoice Number": "12345",
+        "Date": "2023-01-15",
+        "Shipper": "Actual Company Name from Document",
+        "Consignee": "Actual Company Name from Document",
+        "Total Amount": "1,234.56",
+        "Currency": "USD",
+        // Include ALL fields found in the document
+      }
+    },
+    // Repeat for each document
+  ],
+  "documentTypes": ["Invoice", "Purchase Order", "Bill of Lading"],
+  "extractedFields": {
+    "Document Number": ["12345", "PO-6789", "BL-9876"],
+    "Date": ["2023-01-15", "2023-01-10", "2023-01-20"],
+    // Include all fields found across documents
+  }
+}
+
+IMPORTANT: 
+- Extract EVERY field and value present in the documents
+- Be precise and accurate with all extracted data
+- For logistics documents, pay special attention to:
+  * Consignee and Shipper information
+  * Invoice/PO/BL numbers
+  * Dates (issue date, shipping date, etc.)
+  * Product descriptions
+  * Quantities and units
+  * Prices and totals
+  * Package counts and weights
+  * Special instructions or notes
+- If you can't determine a document type, use "Unknown" and extract whatever fields are visible
+- If a document appears to be empty or unreadable, note this in your response
+`
             }
           ]
         }
       ]
-    });
+    };
+    
+    // Call Claude API for extraction
+    const extractionResponse = await this.callClaudeApi(apiParams);
     
     // Process the extraction result
     try {

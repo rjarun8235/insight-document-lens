@@ -6,6 +6,7 @@ export interface ParsedDocument {
   image?: File;
   text?: string;
   documentType?: DocumentType;
+  base64Data?: string; // Base64-encoded data for PDF files
 }
 
 export interface DocumentFile {

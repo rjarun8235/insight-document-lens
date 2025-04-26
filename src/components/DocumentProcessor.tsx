@@ -2,15 +2,13 @@ import { useState, useEffect } from 'react';
 import { DocumentFile, ComparisonResult, ParsedDocument } from '../lib/types';
 import { FileUpload } from './FileUpload';
 import { parseDocument } from '../lib/parsers';
-import ClaudeService, { prepareInstructions } from '../services/claude-service';
-import MultiStageClaudeService from '../services/multi-stage-claude-service';
+import TSVService from '../services/tsv-service';
 import { Button } from '../components/ui/custom-button';
 import { ComparisonView } from './ComparisonView';
 import { LoadingIndicator, LoadingOverlay } from './ui/loading-indicator';
 
-// Initialize the Claude services
-const claudeService = new ClaudeService();
-const multiStageClaudeService = new MultiStageClaudeService();
+// Initialize the TSV service
+const tsvService = new TSVService();
 
 // Available comparison types
 const comparisonTypes = [
@@ -46,6 +44,11 @@ export function DocumentProcessor() {
   const [thinkingProcess, setThinkingProcess] = useState<string | null>(null);
   const [stageResults, setStageResults] = useState<any | null>(null);
 
+  // Set document title
+  useEffect(() => {
+    document.title = "TSV Global - Document Intelligence";
+  }, []);
+
   // Auto-detect appropriate comparison type based on file types
   useEffect(() => {
     if (files.length >= 2) {
@@ -58,7 +61,7 @@ export function DocumentProcessor() {
       const hasBL = fileNames.some(name => name.includes('bl') || name.includes('bill') || name.includes('lading'));
       const hasPackingList = fileNames.some(name => name.includes('pack') || name.includes('packing'));
       
-      // Set appropriate comparison type
+      // Set appropriate comparison type automatically
       if (hasInvoice && hasPO) {
         setComparisonType('invoice-po');
       } else if (hasBL && hasInvoice) {
@@ -204,8 +207,8 @@ export function DocumentProcessor() {
           setProcessingProgress(80);
         }, 4000);
         
-        // Call the multi-stage service
-        const multiStageResult = await multiStageClaudeService.processDocuments(
+        // Call the TSV service
+        const result = await tsvService.processDocuments(
           parsed,
           comparisonType,
           {
@@ -216,13 +219,13 @@ export function DocumentProcessor() {
         );
         
         // Update state with results
-        setComparisonResult(multiStageResult.result);
-        setTokenUsage(multiStageResult.totalTokenUsage);
-        setStageResults(multiStageResult.stages);
+        setComparisonResult(result.result);
+        setTokenUsage(result.totalTokenUsage);
+        setStageResults(result.stages);
         
         // Set thinking process if available
-        if (showThinking && multiStageResult.stages.validation?.thinkingProcess) {
-          setThinkingProcess(multiStageResult.stages.validation.thinkingProcess);
+        if (showThinking && result.stages.validation?.thinkingProcess) {
+          setThinkingProcess(result.stages.validation.thinkingProcess);
         }
         
         setProcessingProgress(100);
@@ -254,7 +257,7 @@ export function DocumentProcessor() {
       const instruction = `Based on the previous comparison of documents, please answer this follow-up question: ${followUpQuestion}`;
       
       // Use the same documents but with the new instruction
-      const response = await claudeService.analyzeDocuments(parsedDocuments, instruction);
+      const response = await tsvService.analyzeDocuments(parsedDocuments, instruction);
       
       // Extract the result and token usage
       const { result, tokenUsage } = response;
@@ -280,43 +283,21 @@ export function DocumentProcessor() {
       <div className="file-upload-section">
         <FileUpload onFilesSelected={handleFilesSelected} />
         
-        {/* Comparison Settings */}
-        <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label htmlFor="comparison-type" className="block text-sm font-medium text-gray-700 mb-1">
-              Comparison Type:
-            </label>
-            <select
-              id="comparison-type"
-              value={comparisonType}
-              onChange={(e) => setComparisonType(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary focus:border-primary"
+        {/* Advanced Options */}
+        <div className="mt-4 p-3 border border-gray-200 rounded-md bg-gray-50">
+          <h3 className="text-sm font-medium text-gray-700 mb-2">Processing Options:</h3>
+          <div className="flex items-center">
+            <input
+              type="checkbox"
+              id="show-thinking"
+              checked={showThinking}
+              onChange={(e) => setShowThinking(e.target.checked)}
+              className="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded"
               disabled={isProcessing}
-            >
-              {comparisonTypes.map((type) => (
-                <option key={type.value} value={type.value}>
-                  {type.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          
-          {/* Advanced Options */}
-          <div className="mt-4 p-3 border border-gray-200 rounded-md bg-gray-50">
-            <h3 className="text-sm font-medium text-gray-700 mb-2">Advanced Options:</h3>
-            <div className="flex items-center">
-              <input
-                type="checkbox"
-                id="show-thinking"
-                checked={showThinking}
-                onChange={(e) => setShowThinking(e.target.checked)}
-                className="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded"
-                disabled={isProcessing}
-              />
-              <label htmlFor="show-thinking" className="ml-2 block text-sm text-gray-700">
-                Show Claude's thinking process (uses extended thinking)
-              </label>
-            </div>
+            />
+            <label htmlFor="show-thinking" className="ml-2 block text-sm text-gray-700">
+              Show thinking process (uses extended thinking)
+            </label>
           </div>
         </div>
         
@@ -334,7 +315,7 @@ export function DocumentProcessor() {
         {/* Processing Status */}
         {isProcessing && (
           <LoadingOverlay 
-            text={processingStage || 'Processing documents...'} 
+            text={processingStage || 'Processing documents with TSV Document Intelligence...'} 
             showProgress={true}
             progress={processingProgress} 
           />
@@ -343,7 +324,7 @@ export function DocumentProcessor() {
         {/* Follow-up Question Loading */}
         {isAskingFollowUp && (
           <LoadingOverlay 
-            text={processingStage || 'Processing your follow-up question...'} 
+            text={processingStage || 'Analyzing your follow-up question...'} 
             showProgress={false}
           />
         )}
@@ -361,14 +342,14 @@ export function DocumentProcessor() {
           <div className="results-section">
             <ComparisonView result={comparisonResult} documentNames={documentNames} />
             
-            {/* Thinking Process Display */}
+            {/* Thinking Process */}
             {thinkingProcess && (
-              <div className="mt-6 p-4 border border-blue-200 rounded-md bg-blue-50">
-                <h3 className="text-lg font-medium mb-2 flex items-center">
+              <div className="mt-4 bg-gray-50 p-4 rounded-md border border-gray-200">
+                <h3 className="flex items-center text-md font-medium text-gray-800 mb-2">
                   <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2 text-blue-500" viewBox="0 0 20 20" fill="currentColor">
                     <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11a1 1 0 10-2 0v2H7a1 1 0 100 2h2v2a1 1 0 102 0v-2h2a1 1 0 100-2h-2V7z" clipRule="evenodd" />
                   </svg>
-                  Claude's Thinking Process
+                  AI Reasoning Process
                 </h3>
                 <div className="bg-white p-3 rounded border border-gray-200 max-h-96 overflow-y-auto">
                   <pre className="text-sm whitespace-pre-wrap">{thinkingProcess}</pre>
@@ -446,7 +427,7 @@ export function DocumentProcessor() {
                   </div>
                 </div>
                 <p className="text-xs text-gray-500 mt-2">
-                  Cost estimate based on Claude API pricing.
+                  Cost estimate based on TSV API pricing.
                 </p>
               </div>
             )}
