@@ -5,11 +5,22 @@ import { DocumentFile, DocumentType, ParsedDocument } from '../lib/types';
 import { getDocumentType } from '@/lib/parsers';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/custom-button';
-import { uuidv4 } from '@/lib/uuid';
 
 // Constants for file upload limits
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const FILES_PER_PAGE = 6;
+
+/**
+ * Generate a simple ID based on filename and current timestamp
+ * This avoids the need for external UUID library
+ */
+function generateDocumentId(fileName: string): string {
+  const timestamp = Date.now();
+  const randomSuffix = Math.random().toString(36).substring(2, 8);
+  // Clean the filename to use as part of the ID
+  const cleanName = fileName.replace(/[^a-zA-Z0-9]/g, '').substring(0, 10);
+  return `${cleanName}-${timestamp}-${randomSuffix}`;
+}
 
 interface FileUploadProps {
   onFilesSelected: (files: DocumentFile[]) => void;
@@ -125,7 +136,7 @@ export function FileUpload({
     }
 
     const newDocumentFiles = acceptedFiles.map(file => ({
-      id: uuidv4(),
+      id: generateDocumentId(file.name),
       name: file.name,
       type: getDocumentType(file),
       file,

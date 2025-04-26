@@ -182,8 +182,8 @@ export function DocumentProcessor() {
       // Create a new instance of the DocLens service
       const service = new DocLensService();
       
-      // Determine comparison type automatically based on document types
-      const detectedType = await service.detectComparisonType(parsed);
+      // Use the default comparison type
+      const detectedType = 'logistics';
       setComparisonType(detectedType);
       
       // Process the documents with the DocLens service

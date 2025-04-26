@@ -5,55 +5,15 @@
  * providing intelligent analysis and comparison of logistics documents.
  */
 
-import TSVDocumentIntelligenceService from './multi-stage-claude-service';
-import ClaudeService from './claude-service';
+import OptimizedDocumentService from './optimized-document-service';
 import { ParsedDocument, ComparisonResult, DocumentType } from '../lib/types';
 
 // Underlying implementation using proprietary TSV Global AI technology
-const multiStageService = new TSVDocumentIntelligenceService();
-const baseService = new ClaudeService();
+const optimizedService = new OptimizedDocumentService();
 
 export default class DocLensService {
   /**
-   * Detect the appropriate comparison type based on document types
-   */
-  async detectComparisonType(documents: ParsedDocument[]): Promise<string> {
-    // Extract document types
-    const types = documents.map(doc => doc.type || 'unknown');
-    
-    // Check for specific document type combinations
-    const hasInvoice = types.some(type => type.toLowerCase().includes('invoice'));
-    const hasBOL = types.some(type => 
-      type.toLowerCase().includes('bill of lading') || 
-      type.toLowerCase().includes('bol')
-    );
-    const hasPackingList = types.some(type => type.toLowerCase().includes('packing list'));
-    const hasPO = types.some(type => 
-      type.toLowerCase().includes('purchase order') || 
-      type.toLowerCase().includes('po')
-    );
-    
-    // Determine comparison type based on document combinations
-    if (hasInvoice && hasBOL) {
-      return 'Invoice-BOL';
-    } else if (hasInvoice && hasPackingList) {
-      return 'Invoice-PackingList';
-    } else if (hasInvoice && hasPO) {
-      return 'Invoice-PO';
-    } else if (hasBOL && hasPackingList) {
-      return 'BOL-PackingList';
-    } else if (hasBOL && hasPO) {
-      return 'BOL-PO';
-    } else if (hasPackingList && hasPO) {
-      return 'PackingList-PO';
-    }
-    
-    // Default to generic comparison if no specific type is detected
-    return 'Logistics Documents';
-  }
-
-  /**
-   * Process documents using the multi-stage Claude service
+   * Process documents using the optimized document service
    */
   async processDocuments(
     documents: ParsedDocument[], 
@@ -73,31 +33,25 @@ export default class DocLensService {
       cacheSavings?: number;
     };
   }> {
-    console.log('🚀 Starting DocLens multi-stage document processing pipeline');
+    console.log('🚀 Starting DocLens optimized document processing pipeline');
     
-    // Process documents with the multi-stage service
-    const result = await multiStageService.processDocuments(documents, comparisonType, options);
+    // Process documents with the optimized service
+    const result = await optimizedService.processDocuments(documents, comparisonType, options);
     
-    // Return the result with properly structured token usage
-    return {
-      result: result.result,
+    // Adapt the result to match the expected types
+    const adaptedResult = {
+      result: result.result as ComparisonResult,
       stages: result.stages,
-      totalTokenUsage: result.totalTokenUsage
+      totalTokenUsage: {
+        input: result.totalTokenUsage.input,
+        output: result.totalTokenUsage.output,
+        cost: result.totalTokenUsage.cost,
+        cacheSavings: result.totalTokenUsage.cacheSavings,
+      },
     };
-  }
 
-  /**
-   * Analyze documents with a custom instruction
-   * 
-   * @param documents Array of parsed documents to analyze
-   * @param instruction Custom instruction for analysis
-   * @returns Analysis result with comparison data and token usage
-   */
-  async analyzeDocuments(
-    documents: ParsedDocument[],
-    instruction: string
-  ): Promise<{ result: ComparisonResult; tokenUsage: { input: number; output: number; cost: number } }> {
-    return await baseService.analyzeDocuments(documents, instruction);
+    // Return the adapted result
+    return adaptedResult;
   }
 
   /**
