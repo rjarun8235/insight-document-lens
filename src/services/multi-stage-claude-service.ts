@@ -27,7 +27,7 @@ const MODELS = {
   },
   VALIDATION: {
     name: 'claude-3-7-sonnet-20250219',
-    maxTokens: 8000,
+    maxTokens: 16000,
     temperature: 0.1,
     costPerInputMToken: 3.00,
     costPerOutputMToken: 15.00,
@@ -450,6 +450,8 @@ IMPORTANT:
     const validationPrompt = `
 You are an expert document validator with deep experience in logistics and shipping documents. Your task is to validate the analysis of multiple documents and ensure it is accurate, thorough, and grounded in the actual document content.
 
+Please think deeply and thoroughly about this task. Consider multiple approaches and show your complete reasoning. Be meticulous in your validation process.
+
 I'll provide you with:
 1. The original extracted data from the documents
 2. An initial analysis of this data
@@ -471,12 +473,13 @@ Document types: ${extractionResult.documentTypes.join(', ')}
 Here is the initial analysis that needs validation:
 ${formattedAnalysis}
 
-Your task is to validate and improve this analysis. Focus on:
-1. Removing any fictional or assumed information
-2. Ensuring all comparisons are accurate
-3. Verifying that quotes are actual content from the documents
-4. Enhancing the analysis with deeper insights
-5. Adding any missing important comparisons or discrepancies
+As you validate this analysis, please:
+1. Check each fact against the original document data
+2. Verify all quoted content is accurate
+3. Identify any discrepancies between documents that were missed
+4. Ensure the analysis is comprehensive and covers all key logistics fields
+5. Focus especially on critical shipping information like dates, quantities, prices, and party details
+6. Before finalizing your response, verify your work by checking that you haven't introduced any information not present in the original data
 
 Return the validated and improved analysis in the same format, maintaining all sections.
 
@@ -487,46 +490,82 @@ IMPORTANT:
 - Be specific about discrepancies between documents
 - Format all sections consistently
 `;
-
-    // Prepare API call parameters
-    const apiParams: any = {
-      model: MODELS.VALIDATION.name,
-      max_tokens: MODELS.VALIDATION.maxTokens,
-      temperature: 1.0, // Must be exactly 1.0 when using thinking
-      messages: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: validationPrompt
-            }
-          ]
-        }
-      ]
-    };
     
-    // Add extended thinking if requested
-    if (showThinking) {
-      apiParams.thinking = {
-        type: "enabled",
-        budget_tokens: MODELS.VALIDATION.thinkingBudget
-      };
-    }
-    
-    // Add extended output if requested - without using unsupported betas parameter
-    if (useExtendedOutput) {
-      // Increase max tokens for extended output, but stay within model limits
-      apiParams.max_tokens = Math.min(64000, MODELS.VALIDATION.maxTokens);
-    }
-    
-    // Call Claude API for validation
-    const validationResponse = await this.callClaudeApi(apiParams);
-    
-    // Process the validation result
+    // Prepare API call parameters with error handling
     try {
+      const apiParams: any = {
+        model: MODELS.VALIDATION.name,
+        max_tokens: MODELS.VALIDATION.maxTokens,
+        temperature: 1.0, // Must be exactly 1.0 when using thinking
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: validationPrompt
+              }
+            ]
+          }
+        ]
+      };
+      
+      // Add extended thinking if requested
+      if (showThinking) {
+        apiParams.thinking = {
+          type: "enabled",
+          budget_tokens: MODELS.VALIDATION.thinkingBudget
+        };
+        
+        // Ensure max_tokens is greater than thinking budget
+        if (apiParams.max_tokens <= MODELS.VALIDATION.thinkingBudget) {
+          apiParams.max_tokens = MODELS.VALIDATION.thinkingBudget + 8000;
+        }
+      }
+      
+      // Add extended output if requested - without using unsupported betas parameter
+      if (useExtendedOutput) {
+        // Increase max tokens for extended output, but stay within model limits
+        // Claude 3.7 Sonnet supports up to 64,000 tokens
+        apiParams.max_tokens = Math.min(64000, Math.max(apiParams.max_tokens, MODELS.VALIDATION.thinkingBudget + 8000));
+      }
+      
+      // Call Claude API for validation with retry mechanism
+      let retryCount = 0;
+      const maxRetries = 3;
+      let validationResponse = null;
+      
+      while (retryCount < maxRetries) {
+        try {
+          validationResponse = await this.callClaudeApi(apiParams);
+          break; // Success, exit retry loop
+        } catch (error) {
+          retryCount++;
+          console.error(`Validation API call failed (attempt ${retryCount}/${maxRetries}):`, error);
+          
+          if (retryCount >= maxRetries) {
+            throw error; // Re-throw if all retries failed
+          }
+          
+          // Wait before retrying (exponential backoff)
+          const waitTime = Math.min(2000 * Math.pow(2, retryCount - 1), 10000);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+        }
+      }
+      
+      if (!validationResponse) {
+        throw new Error('Failed to get validation response after retries');
+      }
+      
+      // Process the validation result
       const contentText = validationResponse.content?.[0]?.text || '';
-      let thinkingProcess = validationResponse.thinking?.thinking || undefined;
+      let thinkingProcess = null;
+      
+      // Extract thinking process if available
+      const thinkingBlock = validationResponse.content?.find(block => block.type === 'thinking');
+      if (thinkingBlock && showThinking) {
+        thinkingProcess = thinkingBlock.thinking;
+      }
       
       // Parse the result into a structured format
       const validatedResult = this.processClaudeResponse(contentText);
@@ -541,7 +580,7 @@ IMPORTANT:
         )
       };
       
-      // Calculate confidence score (simple heuristic)
+      // Calculate confidence score
       const confidence = this.calculateConfidenceScore(validatedResult, extractionResult);
       
       return {
@@ -551,8 +590,23 @@ IMPORTANT:
         tokenUsage
       };
     } catch (error) {
-      console.error('Error processing validation result:', error);
-      throw new Error(`Failed to process validation result: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      console.error('Error in validation stage:', error);
+      
+      // Provide a fallback result with error information
+      return {
+        validatedResult: {
+          ...analysisResult,
+          validation: `<quotes></quotes>\n\n<analysis>Validation failed: ${error instanceof Error ? error.message : 'Unknown error'}</analysis>`,
+          issues: `<quotes></quotes>\n\n<analysis>Validation process encountered an error. Using unvalidated analysis results.</analysis>`
+        },
+        confidence: 0.3, // Low confidence due to validation failure
+        thinkingProcess: null,
+        tokenUsage: {
+          input: 0,
+          output: 0,
+          cost: 0
+        }
+      };
     }
   }
   
