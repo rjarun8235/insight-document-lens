@@ -8,31 +8,34 @@ import {
   ContentBlock, 
   ApiRequest, 
   ApiResponse, 
-  TokenUsage,
-  ModelConfig
+  TokenUsage
 } from '../types/app-types';
 
-// Available Claude models
-export const MODELS = {
+// Proxy function endpoints
+const ENDPOINTS = {
+  EXTRACTION: 'extraction',
+  ANALYSIS: 'analysis',
+  VALIDATION: 'validation'
+};
+
+// Cost calculation constants
+const COST_PER_INPUT_TOKEN = 0.000003; // $3 per million tokens
+const COST_PER_OUTPUT_TOKEN = 0.000015; // $15 per million tokens
+
+// Model configurations
+const MODELS = {
   EXTRACTION: {
     name: 'claude-3-5-sonnet-20241022',
-    maxTokens: 4096,
-    thinkingBudget: 8000, // Enable extended thinking by default
-    costPerInputMToken: 3.0,
-    costPerOutputMToken: 15.0
+    maxTokens: 4096
   },
   ANALYSIS: {
     name: 'claude-3-5-sonnet-20241022',
-    maxTokens: 4096,
-    thinkingBudget: 16000, // Enable extended thinking by default
-    costPerInputMToken: 3.0,
-    costPerOutputMToken: 15.0
+    maxTokens: 4096
   },
   VALIDATION: {
-    name: 'claude-3-5-sonnet-20241022', // Changed to 3.5 to avoid extended thinking issues
+    name: 'claude-3-7-sonnet-20240307',
     maxTokens: 8192,
-    costPerInputMToken: 3.0,
-    costPerOutputMToken: 15.0
+    thinkingBudget: 32000
   }
 };
 
@@ -41,30 +44,26 @@ export const MODELS = {
  * Handles interactions with the Claude API
  */
 export class ClaudeApiService {
-  // Make MODELS available as a class property
-  public MODELS = MODELS;
+  // Make endpoints available as a class property
+  public ENDPOINTS = ENDPOINTS;
   
-  // Supabase function URL for Claude API proxy
+  // Supabase function base URL for Claude API proxy
   private proxyUrl = 'https://cbrgpzdxttzlvvryysaf.supabase.co/functions/v1/claude-api-proxy';
   
   /**
    * Call the Claude API with the given parameters
    */
   async callApi(
-    model: string,
-    messages: Array<{ role: string; content: string | ContentBlock[] }>,
-    maxTokens: number = 4000,
-    thinking?: { type: string; budget_tokens: number }
+    endpoint: string,
+    messages: Array<{ role: string; content: string | ContentBlock[] }>
   ): Promise<ApiResponse> {
-    const modelConfig = this.getModelConfig(model);
-    console.log(`🤖 Calling Claude API (${model})...`);
+    console.log(`🤖 Calling Claude API (${endpoint})...`);
     
     try {
+      // Create request body with endpoint information
       const requestBody = {
-        model,
-        max_tokens: maxTokens,
         messages,
-        thinking
+        endpoint // Include endpoint in the request body
       };
       
       // Log request size for debugging
@@ -86,8 +85,8 @@ export class ClaudeApiService {
       const outputTokens = data.usage.output_tokens;
       const cacheSavings = this.calculateCacheSavings(data.usage);
       
-      const inputCost = (inputTokens / 1000000) * modelConfig.costPerInputMToken;
-      const outputCost = (outputTokens / 1000000) * modelConfig.costPerOutputMToken;
+      const inputCost = (inputTokens / 1000000) * COST_PER_INPUT_TOKEN;
+      const outputCost = (outputTokens / 1000000) * COST_PER_OUTPUT_TOKEN;
       const totalCost = inputCost + outputCost;
       
       console.log(`📊 Token usage - Input: ${inputTokens}, Output: ${outputTokens}`);
@@ -129,21 +128,12 @@ export class ClaudeApiService {
   }
 
   /**
-   * Get the model configuration for the given model name
-   * @param model Model name
-   * @returns Model configuration
-   */
-  private getModelConfig(model: string): ModelConfig {
-    return this.MODELS[model];
-  }
-
-  /**
    * Calculate cache savings from the given usage data
    * @param usage Usage data
    * @returns Cache savings
    */
   private calculateCacheSavings(usage: any): number {
-    return usage.cached_tokens || 0;
+    return usage.cache_read_input_tokens || 0;
   }
 }
 

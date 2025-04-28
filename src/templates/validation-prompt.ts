@@ -3,8 +3,10 @@
  * Used to validate analysis with extended thinking for TSV Global
  */
 
-export const validationPrompt = `
+export const validationPrompt = (comparisonType: string) => `
 You are a senior logistics document validator for TSV Global. Your task is to thoroughly validate the extracted data and analysis for the provided logistics documents using your extended thinking capabilities.
+
+COMPARISON TYPE: ${comparisonType.toUpperCase()}
 
 FOCUS SPECIFICALLY ON THESE KEY LOGISTICS FIELDS:
 1. Consignee

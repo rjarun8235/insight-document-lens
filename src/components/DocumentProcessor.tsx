@@ -67,16 +67,17 @@ export function DocumentProcessor() {
   const [followUpQuestion, setFollowUpQuestion] = useState<string>('');
   const [isAskingFollowUp, setIsAskingFollowUp] = useState<boolean>(false);
   const [processingProgress, setProcessingProgress] = useState<number>(0);
-  const [documentNames, setDocumentNames] = useState<string[]>([]);
-  const [tokenUsage, setTokenUsage] = useState<ExtendedTokenUsage | null>(null);
   const [processingStage, setProcessingStage] = useState<string>('');
-  const [comparisonType, setComparisonType] = useState<string>('logistics');
-  const [processingMode, setProcessingMode] = useState<string>('advanced');
-  const [showThinking, setShowThinking] = useState<boolean>(true);
+  const [tokenUsage, setTokenUsage] = useState<ExtendedTokenUsage | null>(null);
   const [thinkingProcess, setThinkingProcess] = useState<string | null>(null);
-  const [stageResults, setStageResults] = useState<any | null>(null);
+  const [stageResults, setStageResults] = useState<any>(null);
   const [currentStage, setCurrentStage] = useState<string>('');
   const [stageProgress, setStageProgress] = useState<number>(0);
+  const [documentNames, setDocumentNames] = useState<string[]>([]);
+  const [comparisonType, setComparisonType] = useState<string>('logistics');
+  const [processingMode, setProcessingMode] = useState<string>('advanced');
+  // Extended thinking is always enabled by default
+  const showThinking = true;
 
   // Auto-detect appropriate comparison type based on file types
   useEffect(() => {
@@ -407,9 +408,9 @@ export function DocumentProcessor() {
               type="checkbox"
               id="show-thinking"
               checked={showThinking}
-              onChange={(e) => setShowThinking(e.target.checked)}
+              onChange={(e) => {}}
               className="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded"
-              disabled={isProcessing}
+              disabled={true}
             />
             <label htmlFor="show-thinking" className="ml-2 block text-sm text-gray-700">
               Show thinking process (uses extended thinking)

@@ -3,8 +3,10 @@
  * Used to analyze extracted data from logistics documents for TSV Global
  */
 
-export const analysisPrompt = `
+export const analysisPrompt = (comparisonType: string) => `
 You are a logistics document verification specialist for TSV Global. Your task is to analyze and compare the extracted data from multiple logistics documents to verify their consistency and accuracy.
+
+COMPARISON TYPE: ${comparisonType.toUpperCase()}
 
 FOCUS SPECIFICALLY ON THESE KEY FIELDS:
 1. Consignee

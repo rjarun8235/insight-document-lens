@@ -49,7 +49,8 @@ export class DocumentService {
     const processingOptions = {
       showThinking: false, // Never show thinking in UI
       useExtendedOutput: true, // Always use extended output
-      skipValidation: options.skipValidation || false
+      skipValidation: options.skipValidation || false,
+      comparisonType: options.comparisonType || 'logistics'
     };
     
     // Stage 1: Extraction
@@ -61,7 +62,7 @@ export class DocumentService {
     console.log('Starting analysis stage...');
     const analysisResult = await this.analyzeDocuments(
       documents, 
-      extractionResult.result, 
+      extractionResult, 
       processingOptions
     );
     console.log('Analysis complete');
@@ -136,47 +137,37 @@ export class DocumentService {
           source: {
             type: 'base64',
             media_type: 'application/pdf',
-            data: doc.base64Data.replace(/^data:application\/pdf;base64,/, '')
+            data: doc.base64Data
           },
           cache_control: { type: 'ephemeral' } // Enable prompt caching
         });
-      } else if (doc.content) {
-        // Add text content block for non-PDF documents
+      } else {
+        // Add text content with prompt caching
         contentBlocks.push({
           type: 'text',
-          text: `Document ${index + 1}: ${doc.name}\n\n${doc.content}`,
+          text: doc.content,
           cache_control: { type: 'ephemeral' } // Enable prompt caching
         });
       }
     });
     
-    // Add the extraction instructions as the final text block
+    // Add extraction instructions
     contentBlocks.push({
       type: 'text',
-      text: extractionPrompt,
+      text: extractionPrompt(documents.map(doc => doc.name).join(', ')),
       cache_control: { type: 'ephemeral' } // Enable prompt caching
     });
-    
-    // Prepare API call parameters
-    const apiRequest = {
-      model: this.claudeApi.MODELS.EXTRACTION.name,
-      max_tokens: this.claudeApi.MODELS.EXTRACTION.maxTokens,
-      messages: [
-        {
-          role: 'user',
-          content: contentBlocks
-        }
-      ]
-    };
     
     try {
       console.log(`Sending ${contentBlocks.length} content blocks to Claude API`);
       
       // Call Claude API for extraction
       const extractionResponse = await this.claudeApi.callApi(
-        apiRequest.model,
-        apiRequest.messages,
-        apiRequest.max_tokens
+        this.claudeApi.ENDPOINTS.EXTRACTION,
+        [{
+          role: 'user',
+          content: contentBlocks
+        }]
       );
       
       // Parse the extraction result
@@ -233,7 +224,7 @@ export class DocumentService {
             cost: this.calculateCost(
               extractionResponse.usage.input_tokens,
               extractionResponse.usage.output_tokens,
-              this.claudeApi.MODELS.EXTRACTION
+              this.claudeApi.ENDPOINTS.EXTRACTION
             ),
             cacheSavings: this.calculateCacheSavings(extractionResponse.usage)
           };
@@ -267,7 +258,7 @@ export class DocumentService {
             cost: this.calculateCost(
               extractionResponse.usage.input_tokens,
               extractionResponse.usage.output_tokens,
-              this.claudeApi.MODELS.EXTRACTION
+              this.claudeApi.ENDPOINTS.EXTRACTION
             ),
             cacheSavings: this.calculateCacheSavings(extractionResponse.usage)
           };
@@ -304,7 +295,7 @@ export class DocumentService {
           cost: this.calculateCost(
             extractionResponse.usage.input_tokens,
             extractionResponse.usage.output_tokens,
-            this.claudeApi.MODELS.EXTRACTION
+            this.claudeApi.ENDPOINTS.EXTRACTION
           ),
           cacheSavings: this.calculateCacheSavings(extractionResponse.usage)
         };
@@ -357,40 +348,34 @@ export class DocumentService {
    */
   private async analyzeDocuments(
     documents: ParsedDocument[],
-    extractedData: any,
+    extractionResult: ExtractionResult,
     options: ProcessingOptions
   ): Promise<AnalysisResult> {
     try {
-      // Format the extracted data for analysis
-      const formattedData = JSON.stringify({
-        documentData: extractedData.documentData,
-        documentTypes: extractedData.documentTypes,
-        extractedFields: extractedData.extractedFields
-      }, null, 2);
+      // Prepare content blocks for the API request
+      const contentBlocks: ContentBlock[] = [];
       
-      // Prepare API call parameters
-      const apiRequest = {
-        model: this.claudeApi.MODELS.ANALYSIS.name,
-        max_tokens: this.claudeApi.MODELS.ANALYSIS.maxTokens,
-        messages: [
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'text',
-                text: `Document Type: Logistics Documents\n\nExtracted Data:\n${formattedData}\n\n${analysisPrompt}`,
-                cache_control: { type: 'ephemeral' } // Enable prompt caching
-              }
-            ]
-          }
-        ]
-      };
+      // Add extracted data as content blocks
+      contentBlocks.push({
+        type: 'text',
+        text: `Extracted Document Data:\n${JSON.stringify(extractionResult.result, null, 2)}`,
+        cache_control: { type: 'ephemeral' } // Enable prompt caching
+      });
+      
+      // Add analysis instructions
+      contentBlocks.push({
+        type: 'text',
+        text: analysisPrompt(options.comparisonType || 'logistics'),
+        cache_control: { type: 'ephemeral' } // Enable prompt caching
+      });
       
       // Call Claude API for analysis
       const analysisResponse = await this.claudeApi.callApi(
-        apiRequest.model,
-        apiRequest.messages,
-        apiRequest.max_tokens
+        this.claudeApi.ENDPOINTS.ANALYSIS,
+        [{
+          role: 'user',
+          content: contentBlocks
+        }]
       );
       
       // Parse the analysis result
@@ -406,7 +391,7 @@ export class DocumentService {
         cost: this.calculateCost(
           analysisResponse.usage.input_tokens,
           analysisResponse.usage.output_tokens,
-          this.claudeApi.MODELS.ANALYSIS
+          this.claudeApi.ENDPOINTS.ANALYSIS
         ),
         cacheSavings: this.calculateCacheSavings(analysisResponse.usage)
       };
@@ -491,29 +476,18 @@ export class DocumentService {
     // Add the validation instructions as the final text block
     contentBlocks.push({
       type: 'text',
-      text: validationPrompt,
+      text: validationPrompt(options.comparisonType || 'logistics'),
       cache_control: { type: 'ephemeral' } // Enable prompt caching
     });
     
-    // Configure API parameters for validation stage
-    const apiRequest = {
-      model: this.claudeApi.MODELS.VALIDATION.name,
-      max_tokens: this.claudeApi.MODELS.VALIDATION.maxTokens,
-      messages: [
-        {
-          role: 'user',
-          content: contentBlocks
-        }
-      ]
-      // Removed extended thinking for validation to avoid 400 Bad Request errors
-    };
-    
-    // Call Claude API for validation
-    console.log(`Calling Claude API (${this.claudeApi.MODELS.VALIDATION.name}) for validation...`);
+    // Call Claude API for validation with extended thinking
+    console.log(`Calling Claude API for validation with extended thinking...`);
     const validationResponse = await this.claudeApi.callApi(
-      apiRequest.model,
-      apiRequest.messages,
-      apiRequest.max_tokens
+      this.claudeApi.ENDPOINTS.VALIDATION,
+      [{
+        role: 'user',
+        content: contentBlocks
+      }]
     );
     console.log(`Received response from Claude API, processing validation results...`);
     
@@ -562,7 +536,7 @@ export class DocumentService {
       cost: this.calculateCost(
         validationResponse.usage.input_tokens,
         validationResponse.usage.output_tokens,
-        this.claudeApi.MODELS.VALIDATION
+        this.claudeApi.ENDPOINTS.VALIDATION
       ),
       cacheSavings: this.calculateCacheSavings(validationResponse.usage)
     };
@@ -577,7 +551,8 @@ export class DocumentService {
     return {
       result: tables,
       tokenUsage,
-      confidenceScore
+      confidenceScore,
+      thinkingProcess
     };
   }
   
@@ -660,9 +635,16 @@ export class DocumentService {
     }
   }
   
-  private calculateCost(inputTokens: number, outputTokens: number, model: any): number {
-    const inputCost = (inputTokens / 1000000) * model.costPerInputMToken;
-    const outputCost = (outputTokens / 1000000) * model.costPerOutputMToken;
+  /**
+   * Calculate cost based on token usage and endpoint
+   */
+  private calculateCost(inputTokens: number, outputTokens: number, endpoint: string): number {
+    // Cost per million tokens (same for all endpoints)
+    const costPerInputMToken = 0.000003; // $3 per million tokens
+    const costPerOutputMToken = 0.000015; // $15 per million tokens
+    
+    const inputCost = (inputTokens / 1000000) * costPerInputMToken;
+    const outputCost = (outputTokens / 1000000) * costPerOutputMToken;
     return inputCost + outputCost;
   }
   
