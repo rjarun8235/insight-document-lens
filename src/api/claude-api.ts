@@ -58,24 +58,35 @@ export class ClaudeApiService {
 
   /**
    * Call the Claude API with the given parameters
-   * @param endpoint The API endpoint or model name to call
+   * @param modelName The Claude model name to use
    * @param messages The messages to send to the API
    * @param maxTokens Optional maximum number of tokens to generate
    * @param thinking Optional thinking configuration
    */
   async callApi(
-    endpoint: string,
+    modelName: string,
     messages: Array<{ role: string; content: string | ContentBlock[] }>,
     maxTokens?: number,
     thinking?: any
   ): Promise<ApiResponse> {
-    console.log(`🤖 Calling Claude API (${endpoint})...`);
+    console.log(`🤖 Calling Claude API (${modelName})...`);
 
     try {
-      // Create request body with endpoint information
+      // Determine which endpoint to use based on the model or operation
+      // The Supabase function expects one of: extraction, analysis, validation
+      let endpoint = 'extraction'; // Default to extraction endpoint
+
+      // If the model name contains "3-7", use the validation endpoint which has thinking enabled
+      if (modelName.includes('3-7')) {
+        endpoint = 'validation';
+      }
+
+      console.log(`Using endpoint: ${endpoint} for model: ${modelName}`);
+
+      // Create request body with messages
       const requestBody: any = {
         messages,
-        endpoint // Include endpoint in the request body
+        endpoint // Use the determined endpoint, not the model name
       };
 
       // Add optional parameters if provided
@@ -116,8 +127,8 @@ export class ClaudeApiService {
       }
       console.log(`💵 Cost: $${totalCost.toFixed(6)} ($${inputCost.toFixed(6)} input + $${outputCost.toFixed(6)} output)`);
 
-      // Extract the response content
-      const responseContent = data.content[0].text;
+      // Extract the response content (for debugging if needed)
+      // const responseContent = data.content[0].text;
 
       // Get thinking process if available
       const thinkingProcess = data.content.find((c: any) => c.type === 'thinking')?.thinking;
