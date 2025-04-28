@@ -54,7 +54,7 @@ export class ClaudeApiService {
   public ENDPOINTS = ENDPOINTS;
 
   // Supabase function base URL for Claude API proxy
-  private proxyUrl = 'https://cbrgpzdxttzlvvryysaf.supabase.co/functions/v1/claude-api-proxy';
+  private proxyBaseUrl = 'https://cbrgpzdxttzlvvryysaf.supabase.co/functions/v1';
 
   /**
    * Call the Claude API with the given parameters
@@ -83,10 +83,9 @@ export class ClaudeApiService {
 
       console.log(`Using endpoint: ${endpoint} for model: ${modelName}`);
 
-      // Create request body with messages
+      // Create request body with messages (endpoint is now in the URL path)
       const requestBody: any = {
-        messages,
-        endpoint // Use the determined endpoint, not the model name
+        messages
       };
 
       // Add optional parameters if provided
@@ -106,8 +105,17 @@ export class ClaudeApiService {
         console.warn(`⚠️ Large request size (${requestSize.toFixed(2)} KB) may cause issues`);
       }
 
+      // Construct the full URL with the endpoint in the path
+      // Format: /functions/v1/claude-api-proxy/extraction
+      const baseUrl = this.proxyBaseUrl.endsWith('/')
+        ? this.proxyBaseUrl.slice(0, -1)
+        : this.proxyBaseUrl;
+
+      const proxyUrl = `${baseUrl}/claude-api-proxy/${endpoint}`;
+      console.log(`Making API call to: ${proxyUrl}`);
+
       // Make the API call through the Supabase function proxy
-      const response = await axios.post(this.proxyUrl, requestBody);
+      const response = await axios.post(proxyUrl, requestBody);
 
       // Extract the response data
       const data = response.data;
@@ -153,6 +161,21 @@ export class ClaudeApiService {
       if (axios.isAxiosError(error) && error.response) {
         console.error(`❌ Status: ${error.response.status}`);
         console.error(`❌ Response data:`, error.response.data);
+
+        // Log the full error details
+        if (error.response.data && error.response.data.details) {
+          console.error(`❌ Error details: ${error.response.data.details}`);
+        }
+
+        // Log the request URL and method
+        console.error(`❌ Request URL: ${error.config.url}`);
+        console.error(`❌ Request method: ${error.config.method}`);
+
+        // Log the request headers (excluding authorization)
+        const headers = { ...error.config.headers };
+        if (headers.Authorization) headers.Authorization = '[REDACTED]';
+        if (headers['x-api-key']) headers['x-api-key'] = '[REDACTED]';
+        console.error(`❌ Request headers:`, headers);
       }
 
       throw new Error(`Failed to call Claude API: ${error instanceof Error ? error.message : 'Unknown error'}`);
