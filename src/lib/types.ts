@@ -11,6 +11,7 @@ export type DocumentType =
 
 // Interface for parsed document content
 export interface ParsedDocument {
+  id?: string;  // Document ID, generated when parsed
   content: string;
   name: string;
   file?: File;
@@ -48,6 +49,9 @@ export interface ComparisonResult {
   recommendations?: string;
   risks?: string;
   issues?: string;
+  extractedFields?: Record<string, any>;
+  confidence?: number;
+  [key: string]: any;
 }
 
 export interface ComparisonTable {

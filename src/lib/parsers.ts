@@ -281,9 +281,20 @@ export const parseTxt = async (file: File): Promise<string> => {
   });
 };
 
+// Generate a document ID based on filename and timestamp
+function generateDocumentId(fileName: string): string {
+  const timestamp = Date.now();
+  const randomPart = Math.random().toString(36).substring(2, 7);
+  // Clean the filename for use in an ID
+  const cleanName = fileName.replace(/[^a-zA-Z0-9]/g, '').substring(0, 10);
+  return `${cleanName}-${timestamp}-${randomPart}`;
+}
+
 // Main parser function that delegates to the appropriate parser
 export async function parseDocument(file: DocumentFile): Promise<ParsedDocument> {
   const fileType = getDocumentType(file.file);
+  // Generate a unique ID for this document
+  const documentId = file.id || generateDocumentId(file.file.name);
   
   try {
     let content = '';
@@ -328,8 +339,9 @@ export async function parseDocument(file: DocumentFile): Promise<ParsedDocument>
         break;
     }
     
-    // For backward compatibility
+    // Return the parsed document with ID
     return {
+      id: documentId,
       content,
       name: file.file.name,
       file: file.file,
@@ -344,6 +356,7 @@ export async function parseDocument(file: DocumentFile): Promise<ParsedDocument>
   } catch (error) {
     console.error(`Error parsing ${file.file.name}:`, error);
     return {
+      id: documentId,
       content: `Error parsing file: ${error instanceof Error ? error.message : 'Unknown error'}`,
       name: file.file.name,
       file: file.file,

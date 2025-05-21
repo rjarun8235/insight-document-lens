@@ -96,6 +96,14 @@ export interface ExtractionResult {
     extractedFields: Record<string, any[]>;
     rawText?: string;
   };
+  // Direct access to extracted fields for easier processing
+  extractedFields?: Record<string, any>;
+  // Array of document extraction results
+  documents?: Array<{
+    documentName: string;
+    documentType: string;
+    extractedFields: Record<string, any>;
+  }>;
   tokenUsage: TokenUsage;
 }
 
@@ -105,6 +113,7 @@ export interface AnalysisResult {
     discrepancies?: string[];
     corrections?: string[];
   };
+  confidenceScore?: number;
   tokenUsage: TokenUsage;
 }
 

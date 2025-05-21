@@ -1,4 +1,4 @@
-import { DocumentProcessor } from '@/components/DocumentProcessor';
+import { ParallelProcessor } from '@/components/ParallelProcessor';
 import { Branding } from '@/components/ui/branding';
 
 const Index = () => {
@@ -11,7 +11,7 @@ const Index = () => {
       </header>
       
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <DocumentProcessor />
+        <ParallelProcessor />
         
         <div className="mt-16 border-t border-gray-200 pt-10">
           <h2 className="text-2xl font-bold text-center mb-10">How It Works</h2>

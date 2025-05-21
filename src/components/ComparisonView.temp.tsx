@@ -103,16 +103,10 @@ export function ComparisonView({ result, documentNames }: ComparisonViewProps) {
   };
 
   // Format section content with proper spacing and line breaks
-  const formatSectionContent = (content: any) => {
-    // Handle null or undefined
+  const formatSectionContent = (content: string) => {
     if (!content) return '';
-    
-    // Convert object to string if necessary
-    const contentStr = typeof content === 'object' ? JSON.stringify(content, null, 2) : String(content);
-    
     // Add line breaks if missing
-    const formattedContent = contentStr.replace(/\.\s+([A-Z])/g, '.\n$1');
-    
+    const formattedContent = content.replace(/\.\s+([A-Z])/g, '.\n$1');
     // Replace single newlines with double newlines for better spacing
     return formattedContent.replace(/\n(?!\n)/g, '\n\n');
   };
@@ -312,48 +306,16 @@ export function ComparisonView({ result, documentNames }: ComparisonViewProps) {
                         value = String(extractedFields[field]);
                       }
                       
-                      // Look for validation status in validation text or object
+                      // Look for validation status in validation text
                       let status = 'NOT VERIFIED';
-                      
-                      // Safe validation handling with type checking
-                      const validation = result.validation;
-                      if (validation) {
-                        // Handle validation as object (new format from JSON)
-                        if (typeof validation === 'object' && validation !== null) {
-                          // Get all fields in the validation object
-                          const validationKeys = Object.keys(validation);
-                          
-                          // Find matching field with case-insensitive comparison
-                          const validationField = validationKeys.find(
-                            key => key.toLowerCase() === field.toLowerCase()
-                          );
-                          
-                          if (validationField) {
-                            // TypeScript now knows validation is a non-null object
-                            // and validationField is a valid key within it
-                            const validationObj = validation as Record<string, unknown>;
-                            const validationValue = validationObj[validationField];
-                            if (typeof validationValue === 'string') {
-                              if (validationValue.includes('✅')) {
-                                status = 'SUCCESS';
-                              } else if (validationValue.includes('❌')) {
-                                status = 'FAILED';
-                              } else {
-                                status = 'MENTIONED';
-                              }
-                            }
-                          }
-                        } 
-                        // Handle validation as string (old format)
-                        else if (typeof result.validation === 'string') {
-                          if (result.validation.includes(`✅ ${field}`)) {
-                            status = 'SUCCESS';
-                          } else if (result.validation.includes(`❌ ${field}`)) {
-                            status = 'FAILED';
-                          } else if (result.validation.includes(field)) {
-                            // Field is mentioned but without clear status
-                            status = 'MENTIONED';
-                          }
+                      if (result.validation) {
+                        if (result.validation.includes(`✅ ${field}`)) {
+                          status = 'SUCCESS';
+                        } else if (result.validation.includes(`❌ ${field}`)) {
+                          status = 'FAILED';
+                        } else if (result.validation.includes(field)) {
+                          // Field is mentioned but without clear status
+                          status = 'MENTIONED';
                         }
                       }
                         

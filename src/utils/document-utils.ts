@@ -9,8 +9,8 @@ import {
   ProcessingOptions,
   TokenUsage
 } from '../types/app-types';
-import OptimizedDocumentService from '../services/optimized-document-service';
-import { extractionPrompt } from '../templates/extraction-prompt';
+import { parallelDocumentService } from '../services/parallel-document-service';
+import { enhancedExtractionPrompt } from '../templates/enhanced-extraction-prompt';
 import { validationPrompt } from '../templates/validation-prompt';
 
 /**
@@ -19,15 +19,15 @@ import { validationPrompt } from '../templates/validation-prompt';
  * @param comparisonType The type of comparison to perform
  * @returns Formatted instructions for the AI model
  */
-export function prepareInstructions(comparisonType: string): string {
+export function prepareInstructions(comparisonType: string, documentCount: number = 1): string {
   // Default to logistics documents if not specified
   if (!comparisonType) {
     comparisonType = 'Logistics Documents';
   }
   
-  // For logistics documents, use the extraction prompt template
+  // For logistics documents, use the enhanced extraction prompt template
   if (comparisonType.toLowerCase().includes('logistics')) {
-    return extractionPrompt;
+    return enhancedExtractionPrompt(documentCount.toString(), 'logistics');
   }
   
   // For validation, use the validation prompt template
@@ -73,14 +73,11 @@ export async function analyzeDocuments(
       return doc;
     });
     
-    // Create optimized document service instance
-    const documentService = new OptimizedDocumentService();
+    // Use the parallel document service instance
     
-    // Process documents with instruction as comparisonType
-    const result = await documentService.processDocuments(parsedDocs, {
-      ...options,
-      comparisonType: instruction
-    });
+    // Process documents with the parallel service
+    // Note: The parallel service doesn't take options like the previous service did
+    const result = await parallelDocumentService.processDocuments(parsedDocs);
     
     // Return the analysis result
     return {

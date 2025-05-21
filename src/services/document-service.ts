@@ -16,7 +16,7 @@ import {
   ComparisonTable,
   TokenUsage
 } from '../types/app-types';
-import { ClaudeApiService } from '../api/claude-api';
+import axios from 'axios';
 import { extractionPrompt } from '../templates/extraction-prompt';
 import { analysisPrompt } from '../templates/analysis-prompt';
 import { validationPrompt } from '../templates/validation-prompt';
@@ -27,10 +27,57 @@ import { validationPrompt } from '../templates/validation-prompt';
  * Ensures strict compliance and accuracy for logistics document verification
  */
 export class DocumentService {
-  private claudeApi: ClaudeApiService;
+  // API endpoints for different processing stages
+  private extractionApiUrl = 'https://cbrgpzdxttzlvvryysaf.supabase.co/functions/v1/claude-api-proxy/extraction';
+  private analysisApiUrl = 'https://cbrgpzdxttzlvvryysaf.supabase.co/functions/v1/claude-api-proxy/analysis';
+  private validationApiUrl = 'https://cbrgpzdxttzlvvryysaf.supabase.co/functions/v1/claude-api-proxy/validation';
   
-  constructor() {
-    this.claudeApi = new ClaudeApiService();
+  // Default model configuration
+  private maxTokens = 4096;
+  
+  /**
+   * Call the Claude API through the Supabase proxy
+   * @param messages The messages to send to Claude
+   * @param apiUrl The API URL to use (extraction, analysis, or validation)
+   * @returns The API response
+   */
+  private async callClaudeApi(messages: any, apiUrl: string) {
+    try {
+      const response = await axios.post(apiUrl, {
+        messages,
+        max_tokens: this.maxTokens
+      });
+      
+      return response.data;
+    } catch (error: any) {
+      // Detailed error logging with different error scenarios
+      if (error.response) {
+        // The request was made and the server responded with an error status
+        console.error('API Error Response:', {
+          status: error.response.status,
+          statusText: error.response.statusText,
+          data: error.response.data
+        });
+      } else if (error.request) {
+        console.error('API Request Error (No Response):', error.request);
+      } else {
+        console.error('API Error:', error.message);
+      }
+      
+      throw new Error(`Claude API error: ${error.message}`);
+    }
+  }
+  
+  /**
+   * Calculate the cost of the API call based on token usage
+   */
+  private calculateCost(usage: any): number {
+    if (!usage) return 0;
+    
+    const inputCost = (usage.input_tokens || 0) * 0.000003;
+    const outputCost = (usage.output_tokens || 0) * 0.000015;
+    
+    return inputCost + outputCost;
   }
   
   /**
@@ -72,48 +119,46 @@ export class DocumentService {
     let finalResult = analysisResult.result;
     
     if (!processingOptions.skipValidation) {
-      console.log('Starting validation stage...');
+      console.log('Starting validation stage with extended thinking...');
       validationResult = await this.validateAnalysis(
-        documents, 
+        documents,
         extractionResult.result,
         analysisResult.result,
         processingOptions
       );
       finalResult = validationResult.result;
       console.log('Validation complete');
+    } else {
+      console.log('Validation stage skipped (disabled in options)');
     }
     
-    // Calculate total token usage
-    const totalTokenUsage: TokenUsage = {
-      input: extractionResult.tokenUsage.input + 
-             analysisResult.tokenUsage.input + 
-             (validationResult ? validationResult.tokenUsage.input : 0),
-      output: extractionResult.tokenUsage.output + 
-              analysisResult.tokenUsage.output + 
-              (validationResult ? validationResult.tokenUsage.output : 0),
-      cost: extractionResult.tokenUsage.cost + 
-            analysisResult.tokenUsage.cost + 
-            (validationResult ? validationResult.tokenUsage.cost : 0),
-      cacheSavings: (extractionResult.tokenUsage.cacheSavings || 0) + 
-                    (analysisResult.tokenUsage.cacheSavings || 0) + 
-                    (validationResult && validationResult.tokenUsage.cacheSavings ? 
-                      validationResult.tokenUsage.cacheSavings : 0)
-    };
+    // Build final token usage numbers
+    const totalInput = extractionResult.tokenUsage.input + 
+      analysisResult.tokenUsage.input + 
+      (validationResult ? validationResult.tokenUsage.input : 0);
+      
+    const totalOutput = extractionResult.tokenUsage.output + 
+      analysisResult.tokenUsage.output + 
+      (validationResult ? validationResult.tokenUsage.output : 0);
+      
+    const totalCost = extractionResult.tokenUsage.cost + 
+      analysisResult.tokenUsage.cost + 
+      (validationResult ? validationResult.tokenUsage.cost : 0);
     
-    // Compile stages for debugging (not shown in UI)
-    const stages = {
-      extraction: extractionResult,
-      analysis: analysisResult
-    };
-    
-    if (validationResult) {
-      stages['validation'] = validationResult;
-    }
-    
+    const totalCacheSavings = extractionResult.tokenUsage.cacheSavings + 
+      analysisResult.tokenUsage.cacheSavings + 
+      (validationResult ? validationResult.tokenUsage.cacheSavings : 0);
+      
     return {
       result: finalResult,
-      stages,
-      tokenUsage: totalTokenUsage
+      tokenUsage: {
+        input: totalInput,
+        output: totalOutput,
+        cost: totalCost,
+        cacheSavings: totalCacheSavings
+      },
+      thinkingProcess: validationResult ? validationResult.thinkingProcess : undefined,
+      confidenceScore: validationResult ? validationResult.confidenceScore : analysisResult.confidenceScore
     };
   }
   
@@ -121,439 +166,296 @@ export class DocumentService {
    * Extract structured data from documents
    * Ensures accurate extraction of key logistics fields
    */
-  private async extractDocumentData(
+  async extractDocumentData(
     documents: ParsedDocument[],
     options: ProcessingOptions
   ): Promise<ExtractionResult> {
-    // Prepare content blocks for the API request
-    const contentBlocks: ContentBlock[] = [];
-    
-    // Add each document as a content block
-    documents.forEach((doc, index) => {
-      if (doc.type === 'application/pdf' && doc.base64Data) {
-        // Add PDF as document content block with prompt caching
-        contentBlocks.push({
-          type: 'document',
-          source: {
-            type: 'base64',
-            media_type: 'application/pdf',
-            data: doc.base64Data
-          },
-          cache_control: { type: 'ephemeral' } // Enable prompt caching
-        });
-      } else {
-        // Add text content with prompt caching
-        contentBlocks.push({
-          type: 'text',
-          text: doc.content,
-          cache_control: { type: 'ephemeral' } // Enable prompt caching
-        });
-      }
-    });
-    
-    // Add extraction instructions
-    contentBlocks.push({
-      type: 'text',
-      text: extractionPrompt(documents.map(doc => doc.name).join(', ')),
-      cache_control: { type: 'ephemeral' } // Enable prompt caching
-    });
+    console.log(`Extracting data from ${documents.length} documents...`);
     
     try {
-      console.log(`Sending ${contentBlocks.length} content blocks to Claude API`);
+      // Prepare document content for extraction
+      const documentTexts = documents.map(doc => {
+        return `Document: ${doc.name}\n\n${doc.content}`;
+      }).join('\n\n---\n\n');
+      
+      // Prepare extraction request with content blocks
+      const contentBlocks: ContentBlock[] = [
+        {
+          type: 'text',
+          text: documentTexts
+        },
+        {
+          type: 'text',
+          text: extractionPrompt(documents.map(doc => doc.name).join('\n'), options.comparisonType || 'logistics')
+        }
+      ];
       
       // Call Claude API for extraction
-      const extractionResponse = await this.claudeApi.callApi(
-        this.claudeApi.ENDPOINTS.EXTRACTION,
+      const extractionResponse = await this.callClaudeApi(
         [{
           role: 'user',
           content: contentBlocks
-        }]
+        }],
+        this.extractionApiUrl
       );
       
       // Parse the extraction result
       const extractionText = extractionResponse.content?.[0]?.text || '';
       
-      // Log a preview of the response for debugging
-      console.log(`Claude extraction response preview: ${extractionText.substring(0, 200)}...`);
-      
+      let extractedData: any = null;
       try {
-        // Try to parse the JSON response
-        const jsonMatch = extractionText.match(/```json\n([\s\S]*?)\n```/) || 
-                         extractionText.match(/```\n([\s\S]*?)\n```/) ||
-                         extractionText.match(/```javascript\n([\s\S]*?)\n```/) ||
-                         extractionText.match(/```js\n([\s\S]*?)\n```/) ||
-                         extractionText.match(/\{[\s\S]*?"documentData"[\s\S]*?"documentTypes"[\s\S]*?"extractedFields"[\s\S]*?\}/);
-        
-        if (jsonMatch) {
-          // Clean up the JSON string
-          let jsonStr = jsonMatch[1] || jsonMatch[0];
-          
-          // Remove any trailing or leading backticks or whitespace
-          jsonStr = jsonStr.trim();
-          if (jsonStr.startsWith('```')) {
-            jsonStr = jsonStr.substring(3);
-          }
-          if (jsonStr.endsWith('```')) {
-            jsonStr = jsonStr.substring(0, jsonStr.length - 3);
-          }
-          
-          // Ensure we have a valid JSON object
-          if (!jsonStr.startsWith('{')) {
-            const startIndex = jsonStr.indexOf('{');
-            if (startIndex >= 0) {
-              jsonStr = jsonStr.substring(startIndex);
-            }
-          }
-          
-          // Ensure the JSON ends properly
-          if (!jsonStr.endsWith('}')) {
-            const endIndex = jsonStr.lastIndexOf('}');
-            if (endIndex >= 0) {
-              jsonStr = jsonStr.substring(0, endIndex + 1);
-            }
-          }
-          
-          console.log('Attempting to parse JSON:', jsonStr.substring(0, 100) + '...');
-          
-          const extractedData = JSON.parse(jsonStr);
-          
-          // Calculate token usage cost
-          const tokenUsage: TokenUsage = {
-            input: extractionResponse.usage.input_tokens,
-            output: extractionResponse.usage.output_tokens,
-            cost: this.calculateCost(
-              extractionResponse.usage.input_tokens,
-              extractionResponse.usage.output_tokens,
-              this.claudeApi.ENDPOINTS.EXTRACTION
-            ),
-            cacheSavings: this.calculateCacheSavings(extractionResponse.usage)
-          };
-          
-          return {
-            result: extractedData,
-            tokenUsage
-          };
+        // Try to parse JSON from the response
+        const jsonMatch = extractionText.match(/```json\n([\s\S]*?)\n```/);
+        if (jsonMatch && jsonMatch[1]) {
+          extractedData = JSON.parse(jsonMatch[1]);
         } else {
-          // If no JSON pattern was found, try to create a structured response from the text
-          console.log('No JSON pattern found in Claude response. Creating fallback structure.');
+          // Try to find and parse any JSON in the response
+          const anyJsonMatch = extractionText.match(/{[\s\S]*}/);
+          if (anyJsonMatch) {
+            extractedData = JSON.parse(anyJsonMatch[0]);
+          }
+        }
+      } catch (error) {
+        console.error('Error parsing extraction JSON:', error);
+        // If JSON parsing fails, try to extract structured data from the text
+        extractedData = null;
+      }
+      
+      // If JSON parsing failed, create structured data from tables
+      if (!extractedData) {
+        console.log('Falling back to table parsing for extraction results');
+        
+        // Look for markdown tables in the response
+        const tables: any[] = [];
+        const tableRegex = /\|(.+)\|\n\|(?:[-:]+\|)+\n((?:\|.+\|\n)+)/g;
+        let tableMatch;
+        
+        while ((tableMatch = tableRegex.exec(extractionText)) !== null) {
+          const headerRow = tableMatch[1].trim();
+          const dataRows = tableMatch[2].trim();
           
-          // Create a fallback structure based on the documents
-          const documentData = documents.map((doc, index) => ({
-            documentIndex: index + 1,
-            documentType: this.guessDocumentType(doc.name),
-            fields: {
-              'File Name': doc.name,
-              'Content': extractionText.includes(doc.name) ? 
+          // Parse headers
+          const headers = headerRow.split('|').map(h => h.trim()).filter(h => h);
+          
+          // Parse data rows
+          const rows: string[][] = [];
+          const dataRowsArray = dataRows.split('\n');
+          
+          for (const row of dataRowsArray) {
+            if (row.trim() === '') continue;
+            const cells = row.split('|').map(cell => cell.trim()).filter((_, i) => i > 0 && i <= headers.length);
+            rows.push(cells);
+          }
+          
+          // Add table to result
+          tables.push({
+            headers,
+            rows
+          });
+        }
+        
+        // Create structured data from tables
+        const documentData = documents.map((doc, index) => ({
+          documentType: this.guessDocumentType(doc.name),
+          documentName: doc.name,
+          fields: {}
+        }));
+        
+        // If tables are found, use the first table to populate document data
+        if (tables.length > 0 && tables[0].headers.includes('Document') && tables[0].headers.includes('Field')) {
+          const table = tables[0];
+          const documentIndex = table.headers.indexOf('Document');
+          const fieldIndex = table.headers.indexOf('Field');
+          const valueIndex = table.headers.indexOf('Value');
+          
+          if (documentIndex >= 0 && fieldIndex >= 0 && valueIndex >= 0) {
+            for (const row of table.rows) {
+              const docName = row[documentIndex];
+              const field = row[fieldIndex];
+              const value = row[valueIndex];
+              
+              const docDataItem = documentData.find(d => d.documentName.includes(docName));
+              if (docDataItem) {
+                docDataItem.fields[field] = value;
+              }
+            }
+          }
+        } else {
+          // If no usable tables found, add placeholder data
+          documentData.forEach((doc, index) => {
+            doc.fields = {
+              'File Name': doc.documentName,
+              'Content': extractionText.includes(doc.documentName) ? 
                 'Document was processed but structured data could not be extracted' : 
                 'Document may not have been properly processed'
             }
-          }));
-          
-          const documentTypes = documentData.map(doc => doc.documentType);
-          
-          // Calculate token usage cost
-          const tokenUsage: TokenUsage = {
-            input: extractionResponse.usage.input_tokens,
-            output: extractionResponse.usage.output_tokens,
-            cost: this.calculateCost(
-              extractionResponse.usage.input_tokens,
-              extractionResponse.usage.output_tokens,
-              this.claudeApi.ENDPOINTS.EXTRACTION
-            ),
-            cacheSavings: this.calculateCacheSavings(extractionResponse.usage)
-          };
-          
-          return {
-            result: {
-              documentData,
-              documentTypes,
-              extractedFields: { 'File Name': documents.map(doc => doc.name) }
-            },
-            tokenUsage
-          };
+          });
         }
-      } catch (jsonError) {
-        console.error('Error parsing extraction JSON:', jsonError);
-        console.log('Claude response excerpt:', extractionText.substring(0, 500) + '...');
-        
-        // Create a fallback structure for error cases
-        const documentData = documents.map((doc, index) => ({
-          documentIndex: index + 1,
-          documentType: this.guessDocumentType(doc.name),
-          fields: {
-            'File Name': doc.name,
-            'Error': `Failed to parse JSON: ${jsonError instanceof Error ? jsonError.message : 'Unknown error'}`
-          }
-        }));
         
         const documentTypes = documentData.map(doc => doc.documentType);
         
-        // Calculate token usage cost
-        const tokenUsage: TokenUsage = {
-          input: extractionResponse.usage.input_tokens,
-          output: extractionResponse.usage.output_tokens,
-          cost: this.calculateCost(
-            extractionResponse.usage.input_tokens,
-            extractionResponse.usage.output_tokens,
-            this.claudeApi.ENDPOINTS.EXTRACTION
-          ),
-          cacheSavings: this.calculateCacheSavings(extractionResponse.usage)
-        };
-        
-        return {
-          result: {
-            documentData,
-            documentTypes,
-            extractedFields: { 'File Name': documents.map(doc => doc.name) }
-          },
-          tokenUsage
+        extractedData = {
+          documentData,
+          documentTypes
         };
       }
-    } catch (error) {
-      console.error('Error in extraction stage:', error);
       
-      // Create a fallback structure for API error cases
-      const documentData = documents.map((doc, index) => ({
-        documentIndex: index + 1,
-        documentType: this.guessDocumentType(doc.name),
-        fields: {
-          'File Name': doc.name,
-          'Error': `API Error: ${error instanceof Error ? error.message : 'Unknown error'}`
-        }
-      }));
-      
-      const documentTypes = documentData.map(doc => doc.documentType);
-      
-      // Calculate token usage cost with zeros for error case
+      // Calculate token usage cost
       const tokenUsage: TokenUsage = {
-        input: 0,
-        output: 0,
-        cost: 0,
-        cacheSavings: 0
+        input: extractionResponse.usage.input_tokens,
+        output: extractionResponse.usage.output_tokens,
+        cost: this.calculateCost(extractionResponse.usage),
+        cacheSavings: this.calculateCacheSavings(extractionResponse.usage)
       };
       
       return {
-        result: {
-          documentData,
-          documentTypes,
-          extractedFields: { 'File Name': documents.map(doc => doc.name) }
-        },
+        result: extractedData,
         tokenUsage
       };
+    } catch (error) {
+      console.error('Error extracting document data:', error);
+      throw error;
     }
   }
   
   /**
    * Analyze extracted data
    */
-  private async analyzeDocuments(
+  async analyzeDocuments(
     documents: ParsedDocument[],
     extractionResult: ExtractionResult,
     options: ProcessingOptions
   ): Promise<AnalysisResult> {
+    console.log('Analyzing extracted document data...');
+    
     try {
-      // Prepare content blocks for the API request
-      const contentBlocks: ContentBlock[] = [];
-      
-      // Add extracted data as content blocks
-      contentBlocks.push({
-        type: 'text',
-        text: `Extracted Document Data:\n${JSON.stringify(extractionResult.result, null, 2)}`,
-        cache_control: { type: 'ephemeral' } // Enable prompt caching
-      });
-      
-      // Add analysis instructions
-      contentBlocks.push({
-        type: 'text',
-        text: analysisPrompt(options.comparisonType || 'logistics'),
-        cache_control: { type: 'ephemeral' } // Enable prompt caching
-      });
+      // Prepare content blocks for analysis
+      const contentBlocks: ContentBlock[] = [
+        {
+          type: 'text',
+          text: JSON.stringify(extractionResult.result, null, 2)
+        },
+        {
+          type: 'text',
+          text: analysisPrompt(documents.length, options.comparisonType || 'logistics')
+        }
+      ];
       
       // Call Claude API for analysis
-      const analysisResponse = await this.claudeApi.callApi(
-        this.claudeApi.ENDPOINTS.ANALYSIS,
+      const analysisResponse = await this.callClaudeApi(
         [{
           role: 'user',
           content: contentBlocks
-        }]
+        }],
+        this.analysisApiUrl
       );
       
-      // Parse the analysis result
-      const contentText = analysisResponse.content?.[0]?.text || '';
+      // Process the response
+      const analysisText = analysisResponse.content?.[0]?.text || '';
       
-      // Parse the result into a structured format
-      const comparisonResult = this.processClaudeResponse(contentText);
+      // Parse the analysis result into a structured format
+      const analysisResult = this.processClaudeResponse(analysisText);
+      
+      // Extract confidence score (default to 0 if not found)
+      const confidenceMatch = analysisText.match(/confidence(?:\s+score)?:?\s*(\d+)%/i);
+      const confidenceScore = confidenceMatch ? parseInt(confidenceMatch[1], 10) : 0;
       
       // Calculate token usage cost
       const tokenUsage: TokenUsage = {
         input: analysisResponse.usage.input_tokens,
         output: analysisResponse.usage.output_tokens,
-        cost: this.calculateCost(
-          analysisResponse.usage.input_tokens,
-          analysisResponse.usage.output_tokens,
-          this.claudeApi.ENDPOINTS.ANALYSIS
-        ),
+        cost: this.calculateCost(analysisResponse.usage),
         cacheSavings: this.calculateCacheSavings(analysisResponse.usage)
       };
       
       return {
-        result: comparisonResult,
-        tokenUsage
+        result: analysisResult,
+        tokenUsage,
+        confidenceScore
       };
     } catch (error) {
-      console.error('Error in analysis stage:', error);
-      
-      // Provide a fallback result with error information
-      return {
-        result: {
-          tables: [] as ComparisonTable[],
-          analysis: `Analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          summary: 'Unable to analyze the documents due to an error.',
-          insights: 'No insights available due to analysis failure.',
-          issues: `Analysis process encountered an error: ${error instanceof Error ? error.message : 'Unknown error'}`
-        } as ComparisonResult,
-        tokenUsage: {
-          input: 0,
-          output: 0,
-          cost: 0,
-          cacheSavings: 0
-        }
-      };
+      console.error('Error analyzing documents:', error);
+      throw error;
     }
   }
   
   /**
    * Validate the analysis with extended thinking
    */
-  private async validateAnalysis(
+  async validateAnalysis(
     documents: ParsedDocument[],
     extractedData: any,
     analysisResult: any,
     options: ProcessingOptions
   ): Promise<ValidationResult> {
-    console.log('Validating analysis with extended thinking');
+    console.log('Validating analysis with extended thinking...');
     
-    // Prepare content blocks for the validation stage
-    const contentBlocks: ContentBlock[] = [];
-    
-    // Add the document content blocks
-    documents.forEach((doc, index) => {
-      if (doc.type === 'application/pdf' && doc.base64Data) {
-        // Add PDF as document content block with prompt caching
-        contentBlocks.push({
-          type: 'document',
-          source: {
-            type: 'base64',
-            media_type: 'application/pdf',
-            data: doc.base64Data.replace(/^data:application\/pdf;base64,/, '')
-          },
-          cache_control: { type: 'ephemeral' } // Enable prompt caching
-        });
-      } else if (doc.content) {
-        // Add text content block for non-PDF documents
-        contentBlocks.push({
+    try {
+      // Combine data from previous stages for validation
+      const validationData = {
+        extractedData,
+        analysisResult,
+        documentNames: documents.map(doc => doc.name)
+      };
+      
+      // Prepare content blocks
+      const contentBlocks: ContentBlock[] = [
+        {
           type: 'text',
-          text: `Document ${index + 1}: ${doc.name}\n\n${doc.content}`,
-          cache_control: { type: 'ephemeral' } // Enable prompt caching
-        });
-      }
-    });
-    
-    // Add the extraction result as a content block
-    contentBlocks.push({
-      type: 'text',
-      text: `Extracted Document Data:\n${JSON.stringify(extractedData, null, 2)}`,
-      cache_control: { type: 'ephemeral' } // Enable prompt caching
-    });
-    
-    // Add the analysis result as a content block
-    contentBlocks.push({
-      type: 'text',
-      text: `Analysis Result:\n${JSON.stringify(analysisResult, null, 2)}`,
-      cache_control: { type: 'ephemeral' } // Enable prompt caching
-    });
-    
-    // Add the validation instructions as the final text block
-    contentBlocks.push({
-      type: 'text',
-      text: validationPrompt(options.comparisonType || 'logistics'),
-      cache_control: { type: 'ephemeral' } // Enable prompt caching
-    });
-    
-    // Call Claude API for validation with extended thinking
-    console.log(`Calling Claude API for validation with extended thinking...`);
-    const validationResponse = await this.claudeApi.callApi(
-      this.claudeApi.ENDPOINTS.VALIDATION,
-      [{
-        role: 'user',
-        content: contentBlocks
-      }]
-    );
-    console.log(`Received response from Claude API, processing validation results...`);
-    
-    // Process the validation result
-    const validationText = validationResponse.content?.[0]?.text || '';
-    
-    // Extract thinking process and final results
-    let thinkingProcess = '';
-    let finalResults = '';
-    
-    // Check if the response has thinking blocks
-    const thinkingBlocks = validationResponse.content?.filter(block => block.type === 'thinking');
-    if (thinkingBlocks && thinkingBlocks.length > 0) {
-      thinkingProcess = thinkingBlocks[0].thinking || '';
-    }
-    
-    // Get the final text blocks
-    const textBlocks = validationResponse.content?.filter(block => block.type === 'text');
-    if (textBlocks && textBlocks.length > 0) {
-      finalResults = textBlocks[0].text || '';
-    }
-    
-    // If there are no explicit thinking blocks, try to extract thinking from the text
-    if (!thinkingProcess && validationText) {
-      const thinkingMatch = validationText.match(/THINKING PROCESS:[\s\S]*?(?=FINAL VALIDATION RESULTS:|$)/i);
-      const resultsMatch = validationText.match(/FINAL VALIDATION RESULTS:[\s\S]*/i);
+          text: JSON.stringify(validationData, null, 2)
+        },
+        {
+          type: 'text',
+          text: validationPrompt(documents.length, options.comparisonType || 'logistics')
+        }
+      ];
+
+      // Call Claude API for validation with extended thinking
+      const validationResponse = await this.callClaudeApi(
+        [{
+          role: 'user',
+          content: contentBlocks
+        }],
+        this.validationApiUrl
+      );
       
-      if (thinkingMatch) {
-        thinkingProcess = thinkingMatch[0].replace(/THINKING PROCESS:/i, '').trim();
+      // Extract the response text and optional thinking process
+      const validationText = validationResponse.content?.[0]?.text || '';
+      const thinkingProcess = options.showThinking ? validationResponse.thinking?.thinking_text : undefined;
+      
+      // Process the response into a structured format
+      const finalResults = this.processClaudeResponse(validationText);
+      
+      // Extract tables from validation result
+      const tables = finalResults.tables || [];
+      
+      // Extract confidence score
+      let confidenceScore = 0;
+      const confidenceMatch = validationText.match(/confidence(?:\s+score)?:?\s*(\d+)%/i) || 
+                             finalResults.match(/score:?\s*(\d+)%/i);
+      
+      if (confidenceMatch) {
+        confidenceScore = parseInt(confidenceMatch[1], 10);
       }
       
-      if (resultsMatch) {
-        finalResults = resultsMatch[0].replace(/FINAL VALIDATION RESULTS:/i, '').trim();
-      } else {
-        finalResults = validationText;
-      }
+      // Calculate token usage cost
+      const tokenUsage: TokenUsage = {
+        input: validationResponse.usage.input_tokens,
+        output: validationResponse.usage.output_tokens,
+        cost: this.calculateCost(validationResponse.usage),
+        cacheSavings: this.calculateCacheSavings(validationResponse.usage)
+      };
+      
+      return {
+        result: finalResults,
+        tokenUsage,
+        confidenceScore,
+        thinkingProcess
+      };
+    } catch (error) {
+      console.error('Error validating analysis:', error);
+      throw error;
     }
-    
-    // Process the final results to extract tables
-    const tables = this.processClaudeResponse(finalResults);
-    
-    // Calculate token usage cost
-    const tokenUsage: TokenUsage = {
-      input: validationResponse.usage.input_tokens,
-      output: validationResponse.usage.output_tokens,
-      cost: this.calculateCost(
-        validationResponse.usage.input_tokens,
-        validationResponse.usage.output_tokens,
-        this.claudeApi.ENDPOINTS.VALIDATION
-      ),
-      cacheSavings: this.calculateCacheSavings(validationResponse.usage)
-    };
-    
-    // Extract confidence score from the validation text
-    const confidenceMatch = finalResults.match(/confidence\s+score:?\s*(\d+)%/i) || 
-                           finalResults.match(/confidence:?\s*(\d+)%/i) ||
-                           finalResults.match(/score:?\s*(\d+)%/i);
-    
-    const confidenceScore = confidenceMatch ? parseInt(confidenceMatch[1], 10) : 0;
-    
-    return {
-      result: tables,
-      tokenUsage,
-      confidenceScore,
-      thinkingProcess
-    };
   }
   
   /**
@@ -637,14 +539,15 @@ export class DocumentService {
   
   /**
    * Calculate cost based on token usage and endpoint
+   * @deprecated Use the calculateCost method with usage object instead
    */
-  private calculateCost(inputTokens: number, outputTokens: number, endpoint: string): number {
+  private calculateCostLegacy(inputTokens: number, outputTokens: number, endpoint: string): number {
     // Cost per million tokens (same for all endpoints)
     const costPerInputMToken = 0.000003; // $3 per million tokens
     const costPerOutputMToken = 0.000015; // $15 per million tokens
     
-    const inputCost = (inputTokens / 1000000) * costPerInputMToken;
-    const outputCost = (outputTokens / 1000000) * costPerOutputMToken;
+    const inputCost = inputTokens * costPerInputMToken;
+    const outputCost = outputTokens * costPerOutputMToken;
     return inputCost + outputCost;
   }
   
@@ -656,7 +559,7 @@ export class DocumentService {
       return 0;
     }
     // Return the estimated cost savings (90% discount on cached content)
-    return cacheReadTokens * 0.9;
+    return cacheReadTokens * 0.000003 * 0.9;
   }
 }
 
