@@ -8,6 +8,45 @@ interface DocumentExtractionProps {
   onExtractionComplete?: (results: any[]) => void;
 }
 
+/**
+ * Get a dynamic, engaging message based on extraction progress
+ */
+function getExtractionMessage(current: number, total: number): string {
+  // Calculate progress percentage
+  const progress = total > 0 ? (current / total) * 100 : 0;
+  
+  // Messages for different stages of extraction
+  const startMessages = [
+    "Our AI is analyzing your documents with advanced pattern recognition...",
+    "Extracting data in a flash! This usually takes 1-2 minutes per document.",
+    "DocLens AI is working its magic on your logistics documents...",
+    "Sit tight! Our GenAI is carefully extracting key information...",
+  ];
+  
+  const midMessages = [
+    "Making good progress! The AI is identifying document-specific patterns...",
+    "Looking good! We're validating extracted fields for accuracy...",
+    "Almost halfway there! The AI is working through complex document formats...",
+    "Processing nicely! We're normalizing extracted data for consistency...",
+  ];
+  
+  const lateMessages = [
+    "Nearly there! Calculating confidence scores for each extracted field...",
+    "Final stretch! Performing quality checks on the extracted data...",
+    "Just a moment more! Finalizing document type detection...",
+    "Almost done! Preparing the extraction results for display...",
+  ];
+  
+  // Select message based on progress
+  if (progress < 33) {
+    return startMessages[Math.floor(Math.random() * startMessages.length)];
+  } else if (progress < 66) {
+    return midMessages[Math.floor(Math.random() * midMessages.length)];
+  } else {
+    return lateMessages[Math.floor(Math.random() * lateMessages.length)];
+  }
+}
+
 export function DocumentExtraction({ processedDocuments, onExtractionComplete }: DocumentExtractionProps) {
   const [documentTypes, setDocumentTypes] = useState<Record<string, LogisticsDocumentType>>({});
   const { 
@@ -166,7 +205,7 @@ export function DocumentExtraction({ processedDocuments, onExtractionComplete }:
               ></div>
             </div>
             <p className="mt-2 text-xs text-gray-500">
-              This may take several minutes. Please don't close this window.
+              {getExtractionMessage(currentProgress.current, currentProgress.total)}
             </p>
           </div>
         </div>

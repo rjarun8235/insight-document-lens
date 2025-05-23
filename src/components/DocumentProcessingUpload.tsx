@@ -133,130 +133,26 @@ export function DocumentProcessingUpload({ onProcessedDocuments }: DocumentProce
         </div>
       )}
       
-      {/* Processing Results */}
+      {/* Processing Results - Hidden to avoid redundancy with Document Extraction section */}
       {processingStage === 'parsing' && !isParsing && documents.length > 0 && documents.some(doc => doc.parsed) && (
-        <div className="mt-6 space-y-4">
-          <h3 className="text-lg font-medium">Processed Documents</h3>
-          
-          {/* Sort documents: successful first, then failed, then pending */}
-          <div className="space-y-3">
-            {documents
-              .slice()
-              .sort((a, b) => {
-                // First priority: processed vs not processed
-                if (a.parsed && !b.parsed) return -1;
-                if (!a.parsed && b.parsed) return 1;
-                
-                // Second priority: success vs failure
-                if (a.parsed?.success && !b.parsed?.success) return -1;
-                if (!a.parsed?.success && b.parsed?.success) return 1;
-                
-                // Third priority: alphabetical by name
-                return a.name.localeCompare(b.name);
-              })
-              .map((doc) => (
-                <div 
-                  key={doc.id} 
-                  className={`border rounded-lg p-4 bg-white ${
-                    doc.parsed?.success ? 'border-green-200' : 
-                    doc.parsed ? 'border-red-200' : 'border-gray-200'
-                  }`}
-                >
-                  <div className="flex items-start space-x-3">
-                    <div className={`text-2xl ${
-                      doc.parsed?.success ? 'text-green-500' : 
-                      doc.parsed ? 'text-red-500' : 'text-gray-400'
-                    }`}>
-                      {doc.parsed?.success ? '✅' : doc.parsed ? '❌' : '⏳'}
-                    </div>
-                    
-                    <div className="flex-1">
-                      <div className="flex justify-between items-start">
-                        <h4 className="font-medium">{doc.name}</h4>
-                        <span className="text-xs text-gray-500">
-                          {formatFileSize(doc.file.size)}
-                        </span>
-                      </div>
-                      
-                      {doc.parsed && (
-                        <div className="mt-2 text-sm">
-                          <p className={`${doc.parsed.success ? 'text-green-600' : 'text-red-600'}`}>
-                            {doc.parsed.success 
-                              ? `Successfully processed as ${doc.parsed.metadata.fileFormat.toUpperCase()}` 
-                              : `Processing failed: ${doc.parsed.error || 'Unknown error'}`}
-                          </p>
-                          
-                          <p className="text-gray-500 text-xs mt-1">
-                            Method: {doc.parsed.metadata.processingMethod.replace('_', ' ')} • 
-                            Time: {doc.parsed.metadata.processingTime.toFixed(2)}s
-                          </p>
-                          
-                          {doc.parsed.success && (
-                            <div className="mt-2">
-                              {/* File metadata */}
-                              <div className="grid grid-cols-2 gap-2 text-xs mb-2">
-                                {doc.parsed.metadata.charCount && (
-                                  <div>Characters: {doc.parsed.metadata.charCount.toLocaleString()}</div>
-                                )}
-                                {doc.parsed.metadata.wordCount && (
-                                  <div>Words: {doc.parsed.metadata.wordCount.toLocaleString()}</div>
-                                )}
-                                {doc.parsed.metadata.lineCount && (
-                                  <div>Lines: {doc.parsed.metadata.lineCount.toLocaleString()}</div>
-                                )}
-                                {doc.parsed.metadata.sheets && doc.parsed.metadata.sheets.length > 0 && (
-                                  <div>Sheets: {doc.parsed.metadata.sheets.length}</div>
-                                )}
-                              </div>
-                              
-                              {/* Content preview */}
-                              <div className="p-2 bg-gray-50 rounded text-xs font-mono overflow-hidden border border-gray-200">
-                                <p className="truncate">
-                                  {doc.parsed.content 
-                                    ? `${doc.parsed.content.substring(0, 150)}${doc.parsed.content.length > 150 ? '...' : ''}` 
-                                    : doc.parsed.base64 
-                                      ? `Base64 encoded (${Math.round(doc.parsed.base64.length / 1024)} KB)` 
-                                      : 'No content extracted'}
-                                </p>
-                              </div>
-                              
-                              {/* View full content button */}
-                              <button 
-                                className="mt-2 text-xs text-blue-600 hover:text-blue-800 hover:underline"
-                                onClick={() => {
-                                  // Create a popup with the full content
-                                  const popup = window.open('', '_blank', 'width=800,height=600');
-                                  if (popup) {
-                                    popup.document.write(`
-                                      <html>
-                                        <head>
-                                          <title>${doc.name} - Content Preview</title>
-                                          <style>
-                                            body { font-family: sans-serif; padding: 20px; }
-                                            pre { background: #f5f5f5; padding: 15px; border-radius: 5px; overflow: auto; }
-                                          </style>
-                                        </head>
-                                        <body>
-                                          <h2>${doc.name}</h2>
-                                          <p>Format: ${doc.parsed.metadata.fileFormat.toUpperCase()}</p>
-                                          <pre>${doc.parsed.content || 'Binary content (not displayed)'}</pre>
-                                        </body>
-                                      </html>
-                                    `);
-                                  }
-                                }}
-                              >
-                                View Full Content
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))
-            }
+        <div className="mt-6">
+          {/* Document processing complete notification */}
+          <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
+            <div className="flex items-center">
+              <div className="text-green-500 mr-3">✅</div>
+              <div>
+                <h3 className="font-medium text-green-800">Documents Processed Successfully</h3>
+                <p className="text-sm text-green-700">
+                  {documents.filter(doc => doc.parsed?.success).length} of {documents.length} documents were processed successfully.
+                  {documents.some(doc => !doc.parsed?.success) && 
+                    ` ${documents.filter(doc => !doc.parsed?.success).length} document(s) had processing issues.`
+                  }
+                </p>
+                <p className="text-xs text-green-600 mt-1">
+                  Proceed to the Document Data Extraction section above to extract structured information.
+                </p>
+              </div>
+            </div>
           </div>
         </div>
       )}

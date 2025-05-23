@@ -6,11 +6,16 @@ import { ParsedFileResult } from './FileParser';
 import { LogisticsDocumentType, LogisticsDocumentFile } from './document-types';
 import { Anthropic } from '@anthropic-ai/sdk';
 import { 
-  DOCUMENT_SPECIFIC_PROMPTS, 
-  validateFieldFormat, 
+  DOCUMENT_SPECIFIC_PROMPTS,
   normalizeFieldValue,
   preprocessDocumentContent
 } from './document-patterns';
+
+import {
+  validateFieldFormat,
+  validateDocumentTypeData,
+  ValidationResult
+} from './document-validation';
 
 // Define the extraction schema for logistics documents
 export interface LogisticsExtractionSchema {
@@ -579,23 +584,31 @@ ${sampleBase64}...`;
         // Parse the JSON response
         const extractedData = JSON.parse(cleanedJson) as LogisticsExtractionSchema;
         
-        // Add metadata to extraction result
-        // Set a default confidence score based on the completeness of the extraction
+        // Validate against expected document type
+        const typeValidation = validateDocumentTypeData(extractedData, documentType);
+        
+        // Calculate confidence score
         const confidenceScore = this.calculateConfidenceScore(extractedData);
         
+        // Set metadata
         extractedData.metadata = {
           ...extractedData.metadata,
-          documentType: documentType,
-          extractionConfidence: confidenceScore
-          // Document issues are now added in the extractFromParsedFile method
+          documentType,
+          extractionConfidence: confidenceScore,
+          issues: typeValidation.issues,
+          criticalFields: this.getCriticalFieldsForType(documentType),
+          missingFields: this.getMissingCriticalFields(extractedData, documentType)
         };
+        
+        // Normalize the extracted data
+        const normalizedData = this.normalizeExtractedData(extractedData);
         
         // Calculate processing time
         const processingTime = (performance.now() - startTime) / 1000; // in seconds
         
         return {
           success: true,
-          data: extractedData,
+          data: normalizedData,
           processingTime,
           inputTokens: data.usage?.input_tokens || 0,
           outputTokens: data.usage?.output_tokens || 0
@@ -636,6 +649,29 @@ Response:`, cleanedJson);
     return jsonPart.replace(/```json|```/g, '').trim();
   }
   
+  /**
+   * Get a value from an object by dot-separated path
+   * @param obj The object to get the value from
+   * @param path The dot-separated path to the value
+   * @returns The value at the path, or undefined if not found
+   */
+  private getValueByPath(obj: any, path: string): any {
+    if (!obj || !path) return undefined;
+    
+    const parts = path.split('.');
+    let value = obj;
+    
+    for (const part of parts) {
+      if (value && typeof value === 'object' && part in value) {
+        value = value[part];
+      } else {
+        return undefined;
+      }
+    }
+    
+    return value;
+  }
+
   /**
    * Normalize extracted data to standardize formats and correct common issues
    * @param data The extracted data to normalize
@@ -802,84 +838,119 @@ Response:`, cleanedJson);
   }
   
   /**
+   * Get missing critical fields for a specific document type
+   * @param extractedData The extracted data to check
+   * @param documentType The document type to get critical fields for
+   * @returns Array of missing critical field paths
+   */
+  private getMissingCriticalFields(extractedData: LogisticsExtractionSchema, documentType: LogisticsDocumentType): string[] {
+    const criticalFields = this.getCriticalFieldsForType(documentType);
+    const missingFields: string[] = [];
+    
+    for (const field of criticalFields) {
+      const value = this.getValueByPath(extractedData, field);
+      if (value === null || value === undefined || value === '') {
+        missingFields.push(field);
+      }
+    }
+    
+    return missingFields;
+  }
+
+  /**
+   * Get critical fields for a specific document type
+   * @param documentType The document type to get critical fields for
+   * @returns Array of critical field paths
+   */
+  private getCriticalFieldsForType(documentType: LogisticsDocumentType): string[] {
+    // Define critical fields for each document type
+    const criticalFieldsByType: Record<string, string[]> = {
+      'invoice': [
+        'identifiers.invoiceNumber', 
+        'commercial.invoiceValue', 
+        'parties.shipper.name', 
+        'parties.consignee.name',
+        'commercial.invoiceDate'
+      ],
+      'house_waybill': [
+        'identifiers.hawbNumber', 
+        'identifiers.awbNumber', 
+        'shipment.origin', 
+        'shipment.destination', 
+        'shipment.grossWeight',
+        'parties.shipper.name',
+        'parties.consignee.name'
+      ],
+      'air_waybill': [
+        'identifiers.awbNumber', 
+        'shipment.origin', 
+        'shipment.destination', 
+        'shipment.grossWeight',
+        'parties.shipper.name',
+        'parties.consignee.name',
+        'shipment.carrier'
+      ],
+      'bill_of_entry': [
+        'identifiers.beNumber', 
+        'customs.duties', 
+        'parties.importer.name', 
+        'customs.beDate',
+        'customs.hsnCode'
+      ],
+      'packing_list': [
+        'identifiers.packingListNumber', 
+        'shipment.packageCount', 
+        'shipment.grossWeight', 
+        'shipment.netWeight',
+        'parties.shipper.name',
+        'parties.consignee.name'
+      ],
+      'delivery_note': [
+        'identifiers.deliveryNoteNumber', 
+        'shipment.deliveryDate', 
+        'shipment.packageCount',
+        'parties.shipper.name',
+        'parties.consignee.name'
+      ]
+    };
+    
+    return criticalFieldsByType[documentType] || [];
+  }
+
+  /**
    * Calculate a confidence score based on the completeness of the extraction
    * @param extractedData The extracted data to calculate confidence for
    * @returns A confidence score between 0 and 1
    */
   private calculateConfidenceScore(extractedData: LogisticsExtractionSchema): number {
-    // Define critical fields for each document type
-    const criticalFieldsByType: Record<string, string[]> = {
-      'invoice': ['invoiceNumber', 'invoiceValue', 'parties.shipper.name', 'parties.consignee.name'],
-      'house_waybill': ['hawbNumber', 'awbNumber', 'parties.shipper.name', 'parties.consignee.name'],
-      'air_waybill': ['awbNumber', 'parties.shipper.name', 'parties.consignee.name', 'shipment.grossWeight'],
-      'bill_of_entry': ['beNumber', 'customs.duties', 'parties.consignee.name'],
-      'delivery_note': ['deliveryNoteNumber', 'shipment.packageCount', 'parties.shipper.name'],
-      'packing_list': ['shipmentID', 'shipment.packageCount', 'product.description', 'parties.shipper.name']
-    };
+    // Determine document type from metadata or try to detect it
+    const docType = extractedData.metadata?.documentType || 'unknown';
     
     // Get critical fields for this document type
-    let docType = extractedData.metadata.documentType;
-    
-    // If document type is unknown but we can detect it from the content, update it
-    if (docType === 'unknown') {
-      // Check for invoice-specific fields
-      if (extractedData.identifiers.invoiceNumber && extractedData.commercial.invoiceValue?.amount) {
-        docType = 'invoice';
-        extractedData.metadata.documentType = 'invoice';
-      }
-      // Check for house waybill specific fields
-      else if (extractedData.identifiers.hawbNumber && extractedData.identifiers.awbNumber) {
-        docType = 'house_waybill';
-        extractedData.metadata.documentType = 'house_waybill';
-      }
-      // Check for bill of entry specific fields
-      else if (extractedData.identifiers.beNumber || extractedData.customs.duties?.bcd) {
-        docType = 'bill_of_entry';
-        extractedData.metadata.documentType = 'bill_of_entry';
-      }
-      // Check for delivery note specific fields
-      else if (extractedData.identifiers.deliveryNoteNumber) {
-        docType = 'delivery_note';
-        extractedData.metadata.documentType = 'delivery_note';
-      }
-    }
-    
-    const criticalFields = criticalFieldsByType[docType] || [];
-    
-    if (criticalFields.length === 0) {
-      // If we don't have critical fields defined for this type, use a default score
-      return 0.75;
-    }
+    const criticalFields = this.getCriticalFieldsForType(docType as LogisticsDocumentType);
     
     // Count how many critical fields are populated
     let populatedCount = 0;
     
     for (const field of criticalFields) {
-      // Handle nested fields like 'parties.shipper.name'
-      const parts = field.split('.');
-      let value: any = extractedData;
-      
-      for (const part of parts) {
-        if (value && typeof value === 'object' && part in value) {
-          value = value[part];
-        } else {
-          value = null;
-          break;
-        }
-      }
-      
+      const value = this.getValueByPath(extractedData, field);
       if (value !== null && value !== undefined && value !== '') {
         populatedCount++;
       }
     }
     
     // Calculate confidence based on percentage of critical fields populated
-    const baseConfidence = populatedCount / criticalFields.length;
+    const baseConfidence = criticalFields.length > 0 ? populatedCount / criticalFields.length : 0;
     
     // Apply a minimum confidence of 0.5 if at least one critical field is populated
     return populatedCount > 0 ? Math.max(0.5, baseConfidence) : 0.25;
   }
   
+  /**
+   * Get hints for specific document types to help with extraction
+   * @param documentType The document type to get hints for
+   * @returns A string containing hints for the document type
+   */
   // Get hints for specific document types to help with extraction
   getDocumentTypeHints(documentType: LogisticsDocumentType): string {
     switch (documentType) {
