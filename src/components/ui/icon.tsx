@@ -1,3 +1,4 @@
+
 import * as React from 'react';
 import * as LucideIcons from 'lucide-react';
 
@@ -8,10 +9,12 @@ export type IconName = keyof typeof LucideIcons;
 interface IconProps {
   name: IconName;
   className?: string;
+  size?: number;
+  color?: string;
 }
 
-// Simple wrapper component for Lucide icons
-export const Icon = ({ name, className }: IconProps) => {
+// Simple wrapper component for Lucide icons that works with React 18's stricter type checking
+export const Icon = ({ name, className, size = 24, color }: IconProps) => {
   // Get the icon component from Lucide
   const IconComponent = LucideIcons[name];
   
@@ -19,10 +22,16 @@ export const Icon = ({ name, className }: IconProps) => {
     return null;
   }
   
-  // Use a simple div wrapper to avoid TypeScript issues
-  return (
-    <div className={className} style={{ display: 'inline-flex' }}>
-      <IconComponent />
-    </div>
-  );
+  // Return the icon with proper props
+  return React.createElement(IconComponent, {
+    className,
+    size,
+    color
+  });
+};
+
+// Helper function to safely create icon elements
+export const createIconElement = (IconComponent: any, props: any = {}) => {
+  if (!IconComponent) return null;
+  return React.createElement(IconComponent, props);
 };
