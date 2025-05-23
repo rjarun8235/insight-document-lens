@@ -7,6 +7,15 @@ export type DocumentType =
   | 'doc' 
   | 'docx' 
   | 'txt' 
+  | 'rtf'
+  | 'xml'
+  | 'json'
+  | 'html'
+  | 'ppt'
+  | 'pptx'
+  | 'xls'
+  | 'xlsx'
+  | 'zip'
   | 'unknown';
 
 // Interface for parsed document content
@@ -68,3 +77,18 @@ export interface AnalysisSection {
   title: string;
   content: string;
 }
+
+export interface FileUploadProps {
+  onFilesSelected: (files: DocumentFile[]) => void;
+  disabled?: boolean;
+  maxFiles?: number;
+  showFileList?: boolean;
+  maxFileSize?: number;
+  accept?: string;  // File types to accept, e.g. '.pdf,.jpg'
+  multiple?: boolean; // Allow multiple file selection
+}
+
+/**
+ * Processing stage in the document workflow
+ */
+export type ProcessingStage = 'upload' | 'extraction' | 'analysis' | 'validation' | 'results';

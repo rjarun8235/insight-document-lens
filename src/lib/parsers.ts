@@ -16,7 +16,7 @@ export const getDocumentType = (file: File): DocumentType => {
   return 'unknown';
 };
 
-// Parse CSV file to text
+// Parse CSV file to text with improved error handling
 export const parseCSV = async (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -24,41 +24,69 @@ export const parseCSV = async (file: File): Promise<string> => {
     reader.onload = (e) => {
       try {
         const text = e.target?.result as string;
-        
-        // Format CSV content for better readability
-        const lines = text.split('\n');
-        const headers = lines[0].split(',').map(header => header.trim());
-        
-        let formattedText = `CSV File: ${file.name}\n\n`;
-        formattedText += `Headers: ${headers.join(', ')}\n\n`;
-        formattedText += `Data:\n`;
-        
-        for (let i = 1; i < lines.length; i++) {
-          if (lines[i].trim()) {
-            const values = lines[i].split(',').map(value => value.trim());
-            const row = headers.map((header, index) => `${header}: ${values[index] || ''}`).join(', ');
-            formattedText += `Row ${i}: ${row}\n`;
-          }
+        if (!text || text.trim() === '') {
+          throw new Error('Empty CSV file or corrupt data');
         }
         
-        resolve(formattedText);
+        // Format CSV content for better readability
+        try {
+          const lines = text.split('\n');
+          if (lines.length === 0) {
+            throw new Error('No data rows found in CSV');
+          }
+          
+          // Check if there are headers (first non-empty line)
+          let headerIndex = 0;
+          while (headerIndex < lines.length && !lines[headerIndex].trim()) {
+            headerIndex++;
+          }
+          
+          if (headerIndex >= lines.length) {
+            throw new Error('No data found in CSV');
+          }
+          
+          const headers = lines[headerIndex].split(',').map(header => header.trim());
+          
+          let formattedText = `CSV File: ${file.name}\n\n`;
+          formattedText += `Headers: ${headers.join(', ')}\n\n`;
+          formattedText += `Data:\n`;
+          
+          for (let i = headerIndex + 1; i < lines.length; i++) {
+            if (lines[i].trim()) {
+              const values = lines[i].split(',').map(value => value.trim());
+              const row = headers.map((header, index) => `${header}: ${values[index] || ''}`).join(', ');
+              formattedText += `Row ${i - headerIndex}: ${row}\n`;
+            }
+          }
+          
+          resolve(formattedText);
+        } catch (formattingError) {
+          console.warn('Error formatting CSV, returning raw content:', formattingError);
+          // Fallback to raw text if formatting fails
+          resolve(`CSV File: ${file.name}\n\n${text}`);
+        }
       } catch (error) {
-        console.error('Error formatting CSV:', error);
-        // Fallback to raw text if formatting fails
-        const text = e.target?.result as string;
-        resolve(text);
+        console.error('Error parsing CSV:', error);
+        // Fallback to raw text if parsing fails completely
+        try {
+          const text = e.target?.result as string;
+          resolve(`CSV File: ${file.name} (Error processing structure)\n\n${text}`);
+        } catch {
+          reject(new Error('Failed to read CSV file: Corrupt or empty file'));
+        }
       }
     };
 
-    reader.onerror = () => {
-      reject(new Error('Failed to read CSV file'));
+    reader.onerror = (e) => {
+      console.error('FileReader error:', e);
+      reject(new Error('Failed to read CSV file: ' + (e.target?.error?.message || 'Unknown error')));
     };
 
     reader.readAsText(file);
   });
 };
 
-// Parse Excel file to text
+// Parse Excel file to text with improved error handling and formatting
 export const parseExcel = async (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -66,47 +94,123 @@ export const parseExcel = async (file: File): Promise<string> => {
     reader.onload = (e) => {
       try {
         const data = new Uint8Array(e.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: 'array' });
-
-        let result = `Excel File: ${file.name}\n\n`;
+        if (!data || data.length === 0) {
+          throw new Error('Empty Excel file or corrupt data');
+        }
         
-        workbook.SheetNames.forEach(sheetName => {
-          const worksheet = workbook.Sheets[sheetName];
-          const json = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-
-          if (json.length === 0) {
-            result += `Sheet: ${sheetName} (empty)\n\n`;
-            return;
+        try {
+          // Use SheetJS to parse Excel data
+          const workbook = XLSX.read(data, { 
+            type: 'array',
+            cellDates: true,  // Parse dates properly
+            cellStyles: true, // Preserve styles for better parsing
+            cellNF: true      // Keep number formats
+          });
+          
+          if (!workbook || !workbook.SheetNames || workbook.SheetNames.length === 0) {
+            throw new Error('Invalid Excel file structure or no sheets found');
           }
 
-          result += `Sheet: ${sheetName}\n`;
+          let result = `Excel File: ${file.name}\n\n`;
           
-          // Identify headers (first row)
-          const headers = json[0] as string[];
-          
-          // Format data in a more structured way
-          for (let i = 1; i < json.length; i++) {
-            const row = json[i] as any[];
-            if (row.length === 0) continue;
+          workbook.SheetNames.forEach(sheetName => {
+            const worksheet = workbook.Sheets[sheetName];
             
-            result += `Row ${i}: `;
-            const rowData = headers.map((header, index) => 
-              `${header}: ${row[index] !== undefined ? row[index] : ''}`
-            ).join(', ');
-            result += rowData + '\n';
-          }
-          result += '\n';
-        });
+            // Get sheet range
+            if (!worksheet['!ref']) {
+              result += `Sheet: ${sheetName} (empty)\n\n`;
+              return;
+            }
+            
+            // Parse the sheet reference range (e.g., 'A1:D10')
+            const ref = worksheet['!ref'];
+            // Check if sheet has minimal content
+            if (ref === 'A1' || ref === 'A1:A1') {
+              result += `Sheet: ${sheetName} (empty)\n\n`;
+              return;
+            }
+            
+            // Convert to JSON with headers
+            const json = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+            if (json.length === 0) {
+              result += `Sheet: ${sheetName} (empty)\n\n`;
+              return;
+            }
 
-        resolve(result);
+            result += `Sheet: ${sheetName}\n`;
+            
+            // Identify headers (first row)
+            const headers = json[0] as string[];
+            
+            // Format data in a more structured way
+            for (let i = 1; i < json.length; i++) {
+              const row = json[i] as any[];
+              if (!row || row.length === 0) continue;
+              
+              result += `Row ${i}: `;
+              const rowData = headers.map((header, index) => {
+                // Handle different data types properly
+                let value = '';
+                if (row[index] !== undefined) {
+                  if (row[index] instanceof Date) {
+                    value = row[index].toISOString().split('T')[0]; // Format dates as YYYY-MM-DD
+                  } else {
+                    value = String(row[index]);
+                  }
+                }
+                return `${header}: ${value}`;
+              }).join(', ');
+              result += rowData + '\n';
+            }
+            result += '\n';
+          });
+
+          resolve(result);
+        } catch (excelError) {
+          console.error('Error processing Excel file:', excelError);
+          // Try using a simpler method to extract at least some data
+          try {
+            const workbook = XLSX.read(data, { type: 'array' });
+            const firstSheet = workbook.SheetNames[0];
+            const worksheet = workbook.Sheets[firstSheet];
+            
+            // Create a simple text representation of the sheet
+            let sheetText = `Excel File: ${file.name} (Simplified parsing due to error)\n\n`;
+            
+            // Get all cell addresses
+            const cellAddresses = Object.keys(worksheet).filter(key => !key.startsWith('!'));
+            
+            // Group cells by row
+            const rows = {};
+            cellAddresses.forEach(address => {
+              // Extract row number from cell address (e.g., 'A1' -> 1)
+              const rowNum = parseInt(address.match(/\d+/)[0]);
+              if (!rows[rowNum]) rows[rowNum] = [];
+              
+              // Get cell value
+              const cellValue = worksheet[address].v || '';
+              rows[rowNum].push(cellValue);
+            });
+            
+            // Convert rows to text
+            Object.keys(rows).sort((a, b) => parseInt(a) - parseInt(b)).forEach(rowNum => {
+              sheetText += rows[rowNum].join(', ') + '\n';
+            });
+            
+            resolve(sheetText);
+          } catch (fallbackError) {
+            reject(new Error('Failed to parse Excel file: Structure may be corrupt'));
+          }
+        }
       } catch (error) {
         console.error('Error parsing Excel:', error);
-        reject(new Error('Failed to parse Excel file'));
+        reject(new Error(`Failed to parse Excel file: ${error instanceof Error ? error.message : 'Unknown error'}`));
       }
     };
 
-    reader.onerror = () => {
-      reject(new Error('Failed to read Excel file'));
+    reader.onerror = (e) => {
+      console.error('FileReader error:', e);
+      reject(new Error('Failed to read Excel file: ' + (e.target?.error?.message || 'Unknown error')));
     };
 
     reader.readAsArrayBuffer(file);
@@ -197,27 +301,61 @@ export const resizeImageForClaude = async (file: File): Promise<File> => {
 
 // Parse image file to a format suitable for Claude's vision capabilities
 export const parseImage = async (file: File): Promise<ParsedDocument> => {
-  // In a real implementation, this would use OCR to extract text from the image
-  // For now, we'll just return placeholder text
-  
-  return {
-    content: `Image file: ${file.name} (OCR not implemented yet)`,
-    name: file.name,
-    file: file,
-    type: 'image',
+  try {
+    // Resize image if needed for optimal Claude processing
+    const optimizedFile = await resizeImageForClaude(file);
     
-    // For backward compatibility
-    image: file,
-    documentType: 'image' as DocumentType,
-    text: `Image file: ${file.name} (OCR not implemented yet)`
-  };
+    return {
+      content: `Image file: ${file.name} (optimized for Claude vision)`,
+      name: file.name,
+      file: optimizedFile,
+      type: 'image',
+      
+      // For backward compatibility
+      image: optimizedFile,
+      documentType: 'image' as DocumentType,
+      text: `Image file: ${file.name} (optimized for Claude vision)`
+    };
+  } catch (error) {
+    console.error('Error processing image:', error);
+    return {
+      content: `Image file: ${file.name} (Error optimizing: ${error instanceof Error ? error.message : 'Unknown error'})`,
+      name: file.name,
+      file: file,
+      type: 'image',
+      image: file,
+      documentType: 'image' as DocumentType,
+      text: `Image file: ${file.name} (Error optimizing)`
+    };
+  }
 };
 
-// Parse PDF file using Claude's document capabilities
+// Parse PDF file using Claude's document capabilities with improved error handling
 export const parsePDF = async (file: File): Promise<ParsedDocument> => {
   try {
+    // Check file size first - large PDFs need special handling
+    if (file.size > 10 * 1024 * 1024) { // > 10MB
+      console.warn(`Large PDF detected: ${file.name} (${Math.round(file.size/1024/1024)}MB). Special handling required.`);
+      return {
+        content: `Large PDF file: ${file.name} (${Math.round(file.size/1024/1024)}MB)`,
+        name: file.name,
+        file: file,
+        type: 'pdf',
+        documentType: 'pdf' as DocumentType,
+        text: `Large PDF file: ${file.name} (${Math.round(file.size/1024/1024)}MB)`
+      };
+    }
+    
     // Read the file as an ArrayBuffer
     const arrayBuffer = await file.arrayBuffer();
+    
+    // Validate PDF structure - check for basic PDF header signature
+    const firstBytes = new Uint8Array(arrayBuffer.slice(0, 5));
+    const header = String.fromCharCode.apply(null, Array.from(firstBytes));
+    
+    if (!header.startsWith('%PDF-')) {
+      throw new Error('Invalid PDF format: File does not have a PDF signature');
+    }
     
     // Convert ArrayBuffer to Base64
     const base64Data = arrayBufferToBase64(arrayBuffer);
@@ -233,8 +371,8 @@ export const parsePDF = async (file: File): Promise<ParsedDocument> => {
       type: 'pdf',
       
       // For backward compatibility
-      text: `PDF file: ${file.name}`,
-      documentType: 'pdf' as DocumentType
+      documentType: 'pdf' as DocumentType,
+      text: `PDF file: ${file.name}`
     };
   } catch (error) {
     console.error('Error encoding PDF:', error);
@@ -243,10 +381,8 @@ export const parsePDF = async (file: File): Promise<ParsedDocument> => {
       name: file.name,
       file: file,
       type: 'pdf',
-      
-      // For backward compatibility
-      text: `PDF file: ${file.name} (Error: ${error instanceof Error ? error.message : 'Unknown error'})`,
-      documentType: 'pdf' as DocumentType
+      documentType: 'pdf' as DocumentType,
+      text: `PDF file: ${file.name} (Error: ${error instanceof Error ? error.message : 'Unknown error'})`
     };
   }
 };
@@ -257,7 +393,7 @@ export const parseDoc = async (file: File): Promise<string> => {
   return `[Document content from ${file.name} - DOCX parsing would be implemented here]`;
 };
 
-// Parse TXT file
+// Parse TXT file with improved error handling
 export const parseTxt = async (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -265,6 +401,11 @@ export const parseTxt = async (file: File): Promise<string> => {
     reader.onload = (e) => {
       try {
         const text = e.target?.result as string;
+        if (!text || text.trim() === '') {
+          resolve(`Text File: ${file.name} (Empty file)`);
+          return;
+        }
+        
         const formattedText = `Text File: ${file.name}\n\n${text}`;
         resolve(formattedText);
       } catch (error) {
@@ -290,7 +431,7 @@ function generateDocumentId(fileName: string): string {
   return `${cleanName}-${timestamp}-${randomPart}`;
 }
 
-// Main parser function that delegates to the appropriate parser
+// Main parser function that delegates to the appropriate parser with improved error handling
 export async function parseDocument(file: DocumentFile): Promise<ParsedDocument> {
   const fileType = getDocumentType(file.file);
   // Generate a unique ID for this document
@@ -305,16 +446,28 @@ export async function parseDocument(file: DocumentFile): Promise<ParsedDocument>
     switch (fileType) {
       case 'pdf':
         const pdfResult = await parsePDF(file.file);
-        content = pdfResult.text;
+        content = typeof pdfResult.text === 'string' ? pdfResult.text : '';
         base64Data = pdfResult.base64Data || '';
         type = detectDocumentType(content, file.file.name);
-        break;
+        
+        // Return full PDF parsed document
+        return {
+          id: documentId,
+          content,
+          name: file.file.name,
+          file: file.file,
+          base64Data,
+          type,
+          documentType: type as DocumentType,
+          text: content
+        };
         
       case 'image':
-        // For images, we'll use OCR in the future
-        content = `Image file: ${file.file.name}`;
-        type = detectDocumentType(content, file.file.name);
-        break;
+        // For images, use our improved image parser
+        return {
+          ...(await parseImage(file.file)),
+          id: documentId
+        };
         
       case 'csv':
         content = await parseCSV(file.file);
@@ -327,7 +480,6 @@ export async function parseDocument(file: DocumentFile): Promise<ParsedDocument>
         break;
         
       case 'doc':
-      case 'docx':
         content = await parseDoc(file.file);
         type = detectDocumentType(content, file.file.name);
         break;
@@ -351,10 +503,12 @@ export async function parseDocument(file: DocumentFile): Promise<ParsedDocument>
       // Backward compatibility
       text: content,
       documentType: type as DocumentType,
-      image: fileType === 'image' ? file.file : undefined
+      image: (fileType as DocumentType) === 'image' ? file.file : undefined
     };
   } catch (error) {
     console.error(`Error parsing ${file.file.name}:`, error);
+    
+    // Return a error document with original file
     return {
       id: documentId,
       content: `Error parsing file: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -371,22 +525,94 @@ export async function parseDocument(file: DocumentFile): Promise<ParsedDocument>
 
 /**
  * Detect document type based on content and filename
+ * Improved to handle more document types with better confidence
  */
 function detectDocumentType(content: string, filename: string): string {
   const lowerContent = content.toLowerCase();
   const lowerFilename = filename.toLowerCase();
   
-  // Check filename first
-  if (lowerFilename.includes('invoice')) return 'Invoice';
-  if (lowerFilename.includes('bill of lading') || lowerFilename.includes('bol')) return 'Bill of Lading';
-  if (lowerFilename.includes('packing list')) return 'Packing List';
-  if (lowerFilename.includes('purchase order') || lowerFilename.includes('po')) return 'Purchase Order';
+  // First, check for explicitly labeled document types in content
+  if (lowerContent.includes('air waybill') || lowerContent.includes('house air waybill') || lowerContent.includes('hawb')) {
+    return 'Air Waybill';
+  }
   
-  // Then check content
-  if (lowerContent.includes('invoice')) return 'Invoice';
-  if (lowerContent.includes('bill of lading') || lowerContent.includes('bol')) return 'Bill of Lading';
-  if (lowerContent.includes('packing list')) return 'Packing List';
-  if (lowerContent.includes('purchase order') || lowerContent.includes('po number')) return 'Purchase Order';
+  if (lowerContent.includes('bill of lading') || lowerContent.includes('bol')) {
+    return 'Bill of Lading';
+  }
+  
+  if (lowerContent.includes('commercial invoice') || 
+      (lowerContent.includes('invoice') && !lowerContent.includes('waybill') && !lowerContent.includes('packing'))) {
+    return 'Commercial Invoice';
+  }
+  
+  if (lowerContent.includes('packing list')) {
+    return 'Packing List';
+  }
+  
+  if (lowerContent.includes('bill of entry') || lowerContent.includes('customs entry')) {
+    return 'Bill of Entry';
+  }
+  
+  if (lowerContent.includes('purchase order') || (lowerContent.includes('po') && lowerContent.includes('order'))) {
+    return 'Purchase Order';
+  }
+  
+  if (lowerContent.includes('certificate of origin')) {
+    return 'Certificate of Origin';
+  }
+  
+  // Then check filename
+  if (lowerFilename.includes('awb') || lowerFilename.includes('waybill') || lowerFilename.includes('hawb')) {
+    return 'Air Waybill';
+  }
+  
+  if (lowerFilename.includes('bl') || lowerFilename.includes('b/l') || lowerFilename.includes('lading')) {
+    return 'Bill of Lading';
+  }
+  
+  if (lowerFilename.includes('inv') || lowerFilename.includes('invoice')) {
+    return 'Commercial Invoice';
+  }
+  
+  if (lowerFilename.includes('pl') || lowerFilename.includes('pack')) {
+    return 'Packing List';
+  }
+  
+  if (lowerFilename.includes('boe') || lowerFilename.includes('entry')) {
+    return 'Bill of Entry';
+  }
+  
+  if (lowerFilename.includes('po') || lowerFilename.includes('order')) {
+    return 'Purchase Order';
+  }
+  
+  // Check for common pattern of fields
+  const fieldPatterns = {
+    'Air Waybill': ['shipper', 'consignee', 'flight', 'carrier', 'airport'],
+    'Commercial Invoice': ['invoice', 'seller', 'buyer', 'payment', 'item', 'quantity', 'price'],
+    'Packing List': ['packing', 'carton', 'weight', 'dimensions', 'gross weight', 'net weight'],
+    'Bill of Entry': ['importer', 'customs', 'duty', 'country of origin', 'hs code'],
+    'Purchase Order': ['purchase', 'vendor', 'delivery date', 'payment terms']
+  };
+  
+  let bestMatch = { type: 'Unknown Document', count: 0 };
+  
+  for (const [type, patterns] of Object.entries(fieldPatterns)) {
+    let matchCount = 0;
+    patterns.forEach(pattern => {
+      if (lowerContent.includes(pattern)) {
+        matchCount++;
+      }
+    });
+    
+    if (matchCount > bestMatch.count) {
+      bestMatch = { type, count: matchCount };
+    }
+  }
+  
+  if (bestMatch.count >= 2) {
+    return bestMatch.type;
+  }
   
   // Default to unknown
   return 'Unknown Document';
@@ -408,4 +634,42 @@ function arrayBufferToBase64(arrayBuffer: ArrayBuffer): string {
   const uint8Array = new Uint8Array(arrayBuffer);
   const binaryString = uint8Array.reduce((data, byte) => data + String.fromCharCode(byte), '');
   return btoa(binaryString);
+}
+
+// Helper function to check if a PDF file is potentially empty or corrupted
+export async function validatePDF(file: File): Promise<{isValid: boolean, message?: string}> {
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    
+    // Check file size
+    if (arrayBuffer.byteLength < 100) {
+      return { isValid: false, message: 'PDF file is too small to be valid' };
+    }
+    
+    // Check for PDF header
+    const header = new Uint8Array(arrayBuffer.slice(0, 8));
+    const headerString = String.fromCharCode.apply(null, Array.from(header));
+    
+    if (!headerString.startsWith('%PDF-')) {
+      return { isValid: false, message: 'Not a valid PDF file' };
+    }
+    
+    // Check for EOF marker
+    const trailer = new Uint8Array(arrayBuffer.slice(-6));
+    const trailerString = String.fromCharCode.apply(null, Array.from(trailer));
+    
+    if (!trailerString.includes('%%EOF')) {
+      return { 
+        isValid: true, 
+        message: 'PDF might be truncated (no EOF marker found)' 
+      };
+    }
+    
+    return { isValid: true };
+  } catch (error) {
+    return { 
+      isValid: false, 
+      message: `Could not validate PDF: ${error instanceof Error ? error.message : 'Unknown error'}` 
+    };
+  }
 }

@@ -1,0 +1,261 @@
+/* Document Extractor Styles */
+
+.doclens-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem;
+}
+
+.doclens-header {
+  margin-bottom: 2rem;
+  text-align: center;
+}
+
+.doclens-title {
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--foreground);
+  margin-bottom: 0.5rem;
+}
+
+.doclens-subtitle {
+  font-size: 1rem;
+  color: var(--muted-foreground);
+}
+
+.doclens-upload-container {
+  background-color: var(--background);
+  border-radius: 0.5rem;
+  padding: 2rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.doclens-content-container {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.doclens-action-container {
+  display: flex;
+  justify-content: center;
+  margin: 2rem 0;
+}
+
+.doclens-processing-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem;
+  text-align: center;
+  background-color: var(--background);
+  border-radius: 0.5rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.doclens-processing-indicator {
+  margin-bottom: 1rem;
+  color: var(--primary);
+}
+
+.doclens-processing-message {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+  color: var(--foreground);
+}
+
+.doclens-processing-progress {
+  font-size: 0.875rem;
+  color: var(--muted-foreground);
+}
+
+.doclens-results-container {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: 1.5rem;
+}
+
+@media (max-width: 768px) {
+  .doclens-results-container {
+    grid-template-columns: 1fr;
+  }
+}
+
+.doclens-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.doclens-main-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.doclens-card {
+  background-color: var(--background);
+  border-radius: 0.5rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+}
+
+.doclens-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.doclens-card-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+  font-size: 1rem;
+  color: var(--foreground);
+}
+
+.doclens-card-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.doclens-card-content {
+  padding: 1.5rem;
+}
+
+.doclens-document-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.doclens-document-item {
+  display: flex;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  border-radius: 0.25rem;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  gap: 0.75rem;
+}
+
+.doclens-document-item:hover {
+  background-color: var(--accent);
+}
+
+.doclens-document-item-selected {
+  background-color: var(--accent);
+}
+
+.doclens-document-icon {
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+
+.doclens-document-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.doclens-document-name {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.doclens-document-meta {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+
+.doclens-document-action {
+  color: var(--muted-foreground);
+  transition: color 0.2s;
+}
+
+.doclens-document-action:hover {
+  color: var(--foreground);
+}
+
+.doclens-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  font-weight: 500;
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+  background-color: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.doclens-section {
+  margin-bottom: 1.5rem;
+}
+
+.doclens-section:last-child {
+  margin-bottom: 0;
+}
+
+.doclens-section-title {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--foreground);
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.doclens-info-table {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.doclens-info-row {
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  gap: 1rem;
+  font-size: 0.875rem;
+}
+
+.doclens-info-label {
+  color: var(--muted-foreground);
+  font-weight: 500;
+}
+
+.doclens-info-value {
+  color: var(--foreground);
+  word-break: break-word;
+}
+
+.doclens-content-preview {
+  background-color: var(--accent);
+  border-radius: 0.25rem;
+  padding: 1rem;
+  font-size: 0.875rem;
+  color: var(--accent-foreground);
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.doclens-empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  color: var(--muted-foreground);
+  font-size: 0.875rem;
+  text-align: center;
+  background-color: var(--accent);
+  border-radius: 0.25rem;
+}

@@ -1,0 +1,21 @@
+<svg width="125" height="125" viewBox="0 0 125 125" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Lens Background -->
+  <circle cx="62.5" cy="62.5" r="50" fill="#dbeafe" />
+  
+  <!-- Lens Outer Ring -->
+  <circle cx="62.5" cy="62.5" r="50" stroke="#3b82f6" stroke-width="4" fill="none" />
+  
+  <!-- Lens Inner Highlight -->
+  <ellipse cx="45" cy="47" rx="18" ry="18" fill="rgba(255, 255, 255, 0.4)" />
+  
+  <!-- Lens Handle -->
+  <rect x="95" y="95" width="25" height="8" rx="4" transform="rotate(-45 95 95)" fill="#3b82f6" />
+  
+  <!-- Document Icon -->
+  <rect x="47.5" y="40" width="30" height="40" rx="2" fill="white" stroke="#1e40af" stroke-width="2" />
+  
+  <!-- Document Lines -->
+  <line x1="52.5" y1="50" x2="72.5" y2="50" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" />
+  <line x1="52.5" y1="58" x2="72.5" y2="58" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" />
+  <line x1="52.5" y1="66" x2="65.5" y2="66" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" />
+</svg>
