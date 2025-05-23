@@ -681,40 +681,15 @@ Response:`, cleanedJson);
   }
 
   /**
-   * Normalize extracted data to standardize formats and correct common issues
-   * @param data The extracted data to normalize
-   * @returns Normalized data with standardized formats
+   * Previously normalized extracted data, but now returns the original data to prevent false positives
+   * and ensure accurate validation in subsequent steps.
+   * @param data The extracted data
+   * @returns The original data without normalization
    */
   private normalizeExtractedData(data: LogisticsExtractionSchema): LogisticsExtractionSchema {
-    // Create a deep copy to avoid modifying the original
-    const normalized = JSON.parse(JSON.stringify(data)) as LogisticsExtractionSchema;
-    
-    // Normalize address fields
-    if (normalized.parties.shipper.address) {
-      normalized.parties.shipper.address = normalizeFieldValue('address', normalized.parties.shipper.address) as string;
-    }
-    
-    if (normalized.parties.consignee.address) {
-      normalized.parties.consignee.address = normalizeFieldValue('address', normalized.parties.consignee.address) as string;
-    }
-    
-    // Normalize weight units
-    if (normalized.shipment.grossWeight) {
-      normalized.shipment.grossWeight = normalizeFieldValue('grossWeight', normalized.shipment.grossWeight);
-    }
-    
-    if (normalized.shipment.netWeight) {
-      normalized.shipment.netWeight = normalizeFieldValue('netWeight', normalized.shipment.netWeight);
-    }
-    
-    // Normalize dates
-    for (const [key, value] of Object.entries(normalized.dates)) {
-      if (value) {
-        normalized.dates[key as keyof typeof normalized.dates] = normalizeFieldValue(key, value) as string;
-      }
-    }
-    
-    return normalized;
+    // Simply return a deep copy of the original data without normalization
+    // This preserves the raw extraction data for validation
+    return JSON.parse(JSON.stringify(data)) as LogisticsExtractionSchema;
   }
   
   /**
@@ -722,43 +697,61 @@ Response:`, cleanedJson);
    * @param extractedData The extracted data to analyze for document type
    * @returns Updated data with enhanced document type detection
    */
+  /**
+   * Helper method to get the value from a field that might be in the new confidence format
+   * @param field The field to get the value from
+   * @returns The value of the field
+   */
+  private getFieldValue(field: any): any {
+    if (!field) return null;
+    return typeof field === 'object' && 'value' in field ? field.value : field;
+  }
+
   private enhanceDocumentTypeDetection(extractedData: LogisticsExtractionSchema): LogisticsExtractionSchema {
+    if (!extractedData || !extractedData.metadata) return extractedData;
+    
     if (extractedData.metadata.documentType === 'unknown') {
       // More sophisticated detection
+      const hawbNumber = this.getFieldValue(extractedData.identifiers?.hawbNumber);
+      const awbNumber = this.getFieldValue(extractedData.identifiers?.awbNumber);
+      const invoiceNumber = this.getFieldValue(extractedData.identifiers?.invoiceNumber);
+      const beNumber = this.getFieldValue(extractedData.identifiers?.beNumber);
+      const deliveryNoteNumber = this.getFieldValue(extractedData.identifiers?.deliveryNoteNumber);
+      const carrier = this.getFieldValue(extractedData.route?.carrier);
+      const packageCount = this.getFieldValue(extractedData.shipment?.packageCount);
+      const invoiceAmount = this.getFieldValue(extractedData.commercial?.invoiceValue?.amount);
+      const invoiceCurrency = this.getFieldValue(extractedData.commercial?.invoiceValue?.currency);
+      const productDescription = this.getFieldValue(extractedData.product?.description);
+      const bcd = this.getFieldValue(extractedData.customs?.duties?.bcd);
+      const igst = this.getFieldValue(extractedData.customs?.duties?.igst);
       
       // Detect House Air Waybill
-      if (extractedData.identifiers.hawbNumber || 
-          (extractedData.identifiers.awbNumber && extractedData.route.carrier === 'AIR INDIA')) {
+      if (hawbNumber || (awbNumber && carrier === 'AIR INDIA')) {
         extractedData.metadata.documentType = 'house_waybill';
       }
       
       // Detect Air Waybill (Master)
-      else if (extractedData.identifiers.awbNumber && !extractedData.identifiers.hawbNumber &&
-               extractedData.route.carrier) {
+      else if (awbNumber && !hawbNumber && carrier) {
         extractedData.metadata.documentType = 'air_waybill';
       }
       
       // Detect Invoice
-      else if (extractedData.identifiers.invoiceNumber || 
-               (extractedData.commercial.invoiceValue?.amount && extractedData.commercial.invoiceValue?.currency)) {
+      else if (invoiceNumber || (invoiceAmount && invoiceCurrency)) {
         extractedData.metadata.documentType = 'invoice';
       }
       
       // Detect Bill of Entry
-      else if (extractedData.identifiers.beNumber || 
-               (extractedData.customs.duties?.bcd !== null && extractedData.customs.duties?.igst !== null)) {
+      else if (beNumber || (bcd !== null && igst !== null)) {
         extractedData.metadata.documentType = 'bill_of_entry';
       }
       
       // Detect Delivery Note
-      else if (extractedData.identifiers.deliveryNoteNumber || 
-               (extractedData.shipment.packageCount?.value && !extractedData.commercial.invoiceValue?.amount)) {
+      else if (deliveryNoteNumber || (packageCount && !invoiceAmount)) {
         extractedData.metadata.documentType = 'delivery_note';
       }
       
       // Detect Packing List
-      else if (extractedData.shipment.packageCount?.value && extractedData.product.description &&
-               !extractedData.commercial.invoiceValue?.amount) {
+      else if (packageCount && productDescription && !invoiceAmount) {
         extractedData.metadata.documentType = 'packing_list';
       }
     }

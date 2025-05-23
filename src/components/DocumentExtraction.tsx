@@ -47,6 +47,15 @@ function getExtractionMessage(current: number, total: number): string {
   }
 }
 
+/**
+ * Helper function to safely extract field values from potentially nested objects with confidence scores
+ */
+function getDisplayValue(obj: any): string {
+  if (!obj) return '';
+  if (typeof obj === 'object' && 'value' in obj) return obj.value || '';
+  return String(obj);
+}
+
 export function DocumentExtraction({ processedDocuments, onExtractionComplete }: DocumentExtractionProps) {
   const [documentTypes, setDocumentTypes] = useState<Record<string, LogisticsDocumentType>>({});
   const { 
@@ -255,20 +264,20 @@ export function DocumentExtraction({ processedDocuments, onExtractionComplete }:
                         
                         {/* Key extracted fields */}
                         <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
-                          {result.data?.identifiers.invoiceNumber && (
-                            <div>Invoice: <span className="font-medium">{result.data.identifiers.invoiceNumber}</span></div>
+                          {result.data?.identifiers?.invoiceNumber && (
+                            <div>Invoice: <span className="font-medium">{getDisplayValue(result.data?.identifiers?.invoiceNumber)}</span></div>
                           )}
-                          {result.data?.identifiers.awbNumber && (
-                            <div>AWB: <span className="font-medium">{result.data.identifiers.awbNumber}</span></div>
+                          {result.data?.identifiers?.awbNumber && (
+                            <div>AWB: <span className="font-medium">{getDisplayValue(result.data?.identifiers?.awbNumber)}</span></div>
                           )}
-                          {result.data?.identifiers.hawbNumber && (
-                            <div>HAWB: <span className="font-medium">{result.data.identifiers.hawbNumber}</span></div>
+                          {result.data?.identifiers?.hawbNumber && (
+                            <div>HAWB: <span className="font-medium">{getDisplayValue(result.data?.identifiers?.hawbNumber)}</span></div>
                           )}
-                          {result.data?.parties.shipper.name && (
-                            <div>Shipper: <span className="font-medium">{result.data.parties.shipper.name}</span></div>
+                          {result.data?.parties?.shipper?.name && (
+                            <div>Shipper: <span className="font-medium">{getDisplayValue(result.data?.parties?.shipper?.name)}</span></div>
                           )}
-                          {result.data?.parties.consignee.name && (
-                            <div>Consignee: <span className="font-medium">{result.data.parties.consignee.name}</span></div>
+                          {result.data?.parties?.consignee?.name && (
+                            <div>Consignee: <span className="font-medium">{getDisplayValue(result.data?.parties?.consignee?.name)}</span></div>
                           )}
                         </div>
                         
