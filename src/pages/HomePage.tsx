@@ -57,57 +57,14 @@ const HomePage: React.FC = () => {
           </div>
         </div>
         
-        {/* Processed Documents Section */}
-        {documents.length > 0 && (
-          <div className="bg-white shadow-lg rounded-xl overflow-hidden border border-blue-50 mb-8">
-            <div className="bg-gradient-to-r from-green-700 to-green-800 px-6 py-4">
-              <h2 className="text-xl font-semibold text-white flex items-center">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
-                  <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" />
-                  <path fillRule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clipRule="evenodd" />
-                </svg>
-                Processed Documents ({documents.length})
-              </h2>
-              <p className="text-green-200 text-sm mt-1">View and analyze your processed documents</p>
-            </div>
-            <div className="p-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {documents.map((doc) => (
-                  <div key={doc.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm font-medium text-gray-500">{doc.type}</span>
-                      <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">{doc.fileFormat}</span>
-                    </div>
-                    <h3 className="font-medium truncate" title={doc.name}>{doc.name}</h3>
-                    <div className="mt-2 flex items-center justify-between">
-                      <span className="text-xs text-gray-500">{(doc.size / 1024).toFixed(1)} KB</span>
-                      {doc.confidence !== undefined && (
-                        <span className="text-xs font-medium" style={{ color: doc.confidence > 0.7 ? '#047857' : doc.confidence > 0.4 ? '#B45309' : '#DC2626' }}>
-                          {(doc.confidence * 100).toFixed(1)}% confidence
-                        </span>
-                      )}
-                    </div>
-                    {doc.issues && doc.issues.length > 0 && (
-                      <div className="mt-2 text-amber-600 text-xs">
-                        <ul className="list-disc list-inside">
-                          {doc.issues.map((issue, idx) => (
-                            <li key={idx}>{issue}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
+        {/* Processed Documents Section removed to avoid redundancy */}
         
         {/* Features Section */}
         <div className="bg-white shadow-lg rounded-xl overflow-hidden border border-blue-50 mb-8">
           <div className="bg-gradient-to-r from-indigo-700 to-indigo-800 px-6 py-4">
             <h2 className="text-xl font-semibold text-white flex items-center">
               <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-2 2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clipRule="evenodd" />
                 <path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clipRule="evenodd" />
               </svg>
               Key Features

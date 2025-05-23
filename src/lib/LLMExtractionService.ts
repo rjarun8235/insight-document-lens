@@ -161,6 +161,14 @@ You are a logistics document extraction system. Extract data with EXTREME precis
 - First character must be '{', last character must be '}'
 - Must pass JSON.parse() validation
 
+## FIELD-LEVEL CONFIDENCE SCORES
+- For each extracted field, provide a confidence score between 0.0 and 1.0
+- Use the format: { "value": [extracted value], "confidence": [score] }
+- A score of 1.0 means you are 100% confident in the extraction
+- A score of 0.5 means you are 50% confident (moderate uncertainty)
+- A score of 0.0 means you found no value but are including a placeholder
+- Be honest about your uncertainty - this helps downstream processing
+
 ## EXTRACTION FOCUS:
 
 ### CRITICAL FIELDS (99.9% accuracy required):
@@ -918,7 +926,7 @@ Response:`, cleanedJson);
   }
 
   /**
-   * Calculate a confidence score based on the completeness of the extraction
+   * Calculate a confidence score based on field-level confidence scores
    * @param extractedData The extracted data to calculate confidence for
    * @returns A confidence score between 0 and 1
    */
@@ -929,30 +937,69 @@ Response:`, cleanedJson);
     // Get critical fields for this document type
     const criticalFields = this.getCriticalFieldsForType(docType as LogisticsDocumentType);
     
-    // Count how many critical fields are populated
-    let populatedCount = 0;
+    // Track total confidence and field count
+    let totalConfidence = 0;
+    let fieldCount = 0;
+    let criticalFieldsCount = 0;
+    let criticalFieldsConfidence = 0;
     
+    // Calculate weighted confidence for critical fields (2x weight)
     for (const field of criticalFields) {
-      const value = this.getValueByPath(extractedData, field);
-      if (value !== null && value !== undefined && value !== '') {
-        populatedCount++;
+      const fieldValue = this.getValueByPath(extractedData, field);
+      
+      if (fieldValue) {
+        // Check if the field has a confidence score
+        if (typeof fieldValue === 'object' && fieldValue !== null && 'confidence' in fieldValue) {
+          criticalFieldsConfidence += (fieldValue.confidence as number);
+          criticalFieldsCount++;
+        } else {
+          // For backward compatibility with fields that don't have confidence scores
+          criticalFieldsConfidence += 0.8; // Assume 80% confidence for populated fields
+          criticalFieldsCount++;
+        }
       }
     }
     
-    // Calculate confidence based on percentage of critical fields populated
-    const baseConfidence = criticalFields.length > 0 ? populatedCount / criticalFields.length : 0;
+    // Add confidence from all fields recursively
+    this.addFieldConfidence(extractedData, totalConfidence, fieldCount);
+    
+    // Calculate weighted average confidence
+    // Critical fields have 70% weight, all other fields have 30% weight
+    const criticalConfidence = criticalFieldsCount > 0 ? criticalFieldsConfidence / criticalFieldsCount : 0;
+    const overallConfidence = fieldCount > 0 ? totalConfidence / fieldCount : 0;
+    
+    const weightedConfidence = (criticalConfidence * 0.7) + (overallConfidence * 0.3);
     
     // Apply a minimum confidence of 0.5 if at least one critical field is populated
-    return populatedCount > 0 ? Math.max(0.5, baseConfidence) : 0.25;
+    return criticalFieldsCount > 0 ? Math.max(0.5, weightedConfidence) : 0.25;
   }
   
+  /**
+   * Recursively add confidence scores from all fields in the object
+   */
+  private addFieldConfidence(obj: any, totalConfidence: number, fieldCount: number): void {
+    if (!obj || typeof obj !== 'object') return;
+    
+    for (const key in obj) {
+      const value = obj[key];
+      if (value && typeof value === 'object') {
+        if ('confidence' in value && typeof value.confidence === 'number') {
+          totalConfidence += value.confidence;
+          fieldCount += 1;
+        } else {
+          // Recursively process nested objects
+          this.addFieldConfidence(value, totalConfidence, fieldCount);
+        }
+      }
+    }
+  }
+
   /**
    * Get hints for specific document types to help with extraction
    * @param documentType The document type to get hints for
    * @returns A string containing hints for the document type
    */
-  // Get hints for specific document types to help with extraction
-  getDocumentTypeHints(documentType: LogisticsDocumentType): string {
+  public getDocumentTypeHints(documentType: LogisticsDocumentType): string {
     switch (documentType) {
       case 'invoice':
         return `- Look for invoice number, date, and customer PO
