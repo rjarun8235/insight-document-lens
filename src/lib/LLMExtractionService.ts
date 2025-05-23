@@ -1,12 +1,18 @@
 // LLM EXTRACTION SERVICE
 // Connects parsed documents to Claude API via Supabase proxy
 
-import { ParsedFileResult } from './FileParser';
-import { LogisticsDocumentType } from './document-types';
 import { useState } from 'react';
+import { ParsedFileResult } from './FileParser';
+import { LogisticsDocumentType, LogisticsDocumentFile } from './document-types';
+import { Anthropic } from '@anthropic-ai/sdk';
+import { 
+  DOCUMENT_SPECIFIC_PROMPTS, 
+  validateFieldFormat, 
+  normalizeFieldValue,
+  preprocessDocumentContent
+} from './document-patterns';
 
-// ===== EXTRACTION SCHEMA (FROM YOUR AGREED DESIGN) =====
-
+// Define the extraction schema for logistics documents
 export interface LogisticsExtractionSchema {
   // Core identifiers that must propagate across all documents
   identifiers: {
@@ -380,9 +386,20 @@ export class LLMExtractionService {
     content: string, 
     documentType: LogisticsDocumentType
   ): Promise<ExtractionResult> {
+    console.log(`🔍 Extracting from text document (${documentType})...`);
+    console.log(`📄 Content length: ${content.length} characters`);
+    
     const startTime = Date.now();
     
     try {
+      // Preprocess content to highlight important fields
+      const processedContent = preprocessDocumentContent(content, documentType);
+      console.log(`🔎 Content preprocessed with field highlighting`);
+      
+      // Add document-specific pattern guidance
+      const patternGuidance = DOCUMENT_SPECIFIC_PROMPTS[documentType] || DOCUMENT_SPECIFIC_PROMPTS['unknown'];
+      console.log(`📋 Added document-specific pattern guidance for ${documentType}`);
+      
       const response = await fetch(`${this.supabaseProxyUrl}/extraction`, {
         method: 'POST',
         headers: {
@@ -392,7 +409,11 @@ export class LLMExtractionService {
           messages: [
             {
               role: 'user',
-              content: LOGISTICS_EXTRACTION_PROMPT + content
+              content: `${LOGISTICS_EXTRACTION_PROMPT}
+
+${patternGuidance}
+
+${processedContent}`
             }
           ]
         })
@@ -405,6 +426,7 @@ export class LLMExtractionService {
 
       const result = await response.json();
       const processingTime = (Date.now() - startTime) / 1000;
+      console.log(`✅ Extraction completed in ${processingTime.toFixed(2)}s`);
 
       // Extract the JSON content from Claude's response
       const claudeResponse = result.content[0].text;
@@ -412,16 +434,23 @@ export class LLMExtractionService {
       // Clean and parse the JSON response
       const cleanedResponse = this.cleanJsonResponse(claudeResponse);
       const extractedData = JSON.parse(cleanedResponse);
-
-      // Add metadata
-      extractedData.metadata = {
-        ...extractedData.metadata,
-        documentType: documentType
-      };
+      
+      // Normalize extracted field values
+      const normalizedData = this.normalizeExtractedData(extractedData);
+      console.log(`🔄 Normalized extracted field values`);
+      
+      // Enhanced document type detection
+      const enhancedData = this.enhanceDocumentTypeDetection(normalizedData);
+      console.log(`🔍 Enhanced document type detection: ${enhancedData.metadata.documentType}`);
+      
+      // Calculate enhanced confidence score
+      const confidenceScore = this.calculateEnhancedConfidenceScore(enhancedData);
+      enhancedData.metadata.extractionConfidence = confidenceScore;
+      console.log(`📊 Calculated enhanced confidence score: ${(confidenceScore * 100).toFixed(1)}%`);
       
       return {
         success: true,
-        data: extractedData,
+        data: enhancedData,
         processingTime,
         inputTokens: result.usage?.input_tokens || 0,
         outputTokens: result.usage?.output_tokens || 0
@@ -605,6 +634,171 @@ Response:`, cleanedJson);
     
     // Remove any markdown code block markers
     return jsonPart.replace(/```json|```/g, '').trim();
+  }
+  
+  /**
+   * Normalize extracted data to standardize formats and correct common issues
+   * @param data The extracted data to normalize
+   * @returns Normalized data with standardized formats
+   */
+  private normalizeExtractedData(data: LogisticsExtractionSchema): LogisticsExtractionSchema {
+    // Create a deep copy to avoid modifying the original
+    const normalized = JSON.parse(JSON.stringify(data)) as LogisticsExtractionSchema;
+    
+    // Normalize address fields
+    if (normalized.parties.shipper.address) {
+      normalized.parties.shipper.address = normalizeFieldValue('address', normalized.parties.shipper.address) as string;
+    }
+    
+    if (normalized.parties.consignee.address) {
+      normalized.parties.consignee.address = normalizeFieldValue('address', normalized.parties.consignee.address) as string;
+    }
+    
+    // Normalize weight units
+    if (normalized.shipment.grossWeight) {
+      normalized.shipment.grossWeight = normalizeFieldValue('grossWeight', normalized.shipment.grossWeight);
+    }
+    
+    if (normalized.shipment.netWeight) {
+      normalized.shipment.netWeight = normalizeFieldValue('netWeight', normalized.shipment.netWeight);
+    }
+    
+    // Normalize dates
+    for (const [key, value] of Object.entries(normalized.dates)) {
+      if (value) {
+        normalized.dates[key as keyof typeof normalized.dates] = normalizeFieldValue(key, value) as string;
+      }
+    }
+    
+    return normalized;
+  }
+  
+  /**
+   * Enhanced document type detection based on extracted content
+   * @param extractedData The extracted data to analyze for document type
+   * @returns Updated data with enhanced document type detection
+   */
+  private enhanceDocumentTypeDetection(extractedData: LogisticsExtractionSchema): LogisticsExtractionSchema {
+    if (extractedData.metadata.documentType === 'unknown') {
+      // More sophisticated detection
+      
+      // Detect House Air Waybill
+      if (extractedData.identifiers.hawbNumber || 
+          (extractedData.identifiers.awbNumber && extractedData.route.carrier === 'AIR INDIA')) {
+        extractedData.metadata.documentType = 'house_waybill';
+      }
+      
+      // Detect Air Waybill (Master)
+      else if (extractedData.identifiers.awbNumber && !extractedData.identifiers.hawbNumber &&
+               extractedData.route.carrier) {
+        extractedData.metadata.documentType = 'air_waybill';
+      }
+      
+      // Detect Invoice
+      else if (extractedData.identifiers.invoiceNumber || 
+               (extractedData.commercial.invoiceValue?.amount && extractedData.commercial.invoiceValue?.currency)) {
+        extractedData.metadata.documentType = 'invoice';
+      }
+      
+      // Detect Bill of Entry
+      else if (extractedData.identifiers.beNumber || 
+               (extractedData.customs.duties?.bcd !== null && extractedData.customs.duties?.igst !== null)) {
+        extractedData.metadata.documentType = 'bill_of_entry';
+      }
+      
+      // Detect Delivery Note
+      else if (extractedData.identifiers.deliveryNoteNumber || 
+               (extractedData.shipment.packageCount?.value && !extractedData.commercial.invoiceValue?.amount)) {
+        extractedData.metadata.documentType = 'delivery_note';
+      }
+      
+      // Detect Packing List
+      else if (extractedData.shipment.packageCount?.value && extractedData.product.description &&
+               !extractedData.commercial.invoiceValue?.amount) {
+        extractedData.metadata.documentType = 'packing_list';
+      }
+    }
+    
+    return extractedData;
+  }
+  
+  /**
+   * Calculate an enhanced confidence score based on field presence and quality
+   * @param extractedData The extracted data to calculate confidence for
+   * @returns An enhanced confidence score between 0 and 1
+   */
+  private calculateEnhancedConfidenceScore(extractedData: LogisticsExtractionSchema): number {
+    // Define critical fields for each document type
+    const criticalFieldsByType: Record<string, string[]> = {
+      'invoice': ['invoiceNumber', 'invoiceValue', 'parties.shipper.name', 'parties.consignee.name'],
+      'house_waybill': ['hawbNumber', 'awbNumber', 'parties.shipper.name', 'parties.consignee.name'],
+      'air_waybill': ['awbNumber', 'parties.shipper.name', 'parties.consignee.name', 'shipment.grossWeight'],
+      'bill_of_entry': ['beNumber', 'customs.duties', 'parties.consignee.name'],
+      'delivery_note': ['deliveryNoteNumber', 'shipment.packageCount', 'parties.shipper.name'],
+      'packing_list': ['shipmentID', 'shipment.packageCount', 'product.description', 'parties.shipper.name']
+    };
+    
+    // Get critical fields for this document type
+    let docType = extractedData.metadata.documentType;
+    
+    // If document type is unknown, try to detect it
+    if (docType === 'unknown') {
+      const enhancedData = this.enhanceDocumentTypeDetection(extractedData);
+      docType = enhancedData.metadata.documentType;
+    }
+    
+    const criticalFields = criticalFieldsByType[docType] || [];
+    
+    if (criticalFields.length === 0) {
+      // If we don't have critical fields defined for this type, use a default score
+      return 0.75;
+    }
+    
+    // Count how many critical fields are populated
+    let populatedCount = 0;
+    let qualityScore = 0;
+    let totalQualityChecks = 0;
+    
+    for (const field of criticalFields) {
+      // Handle nested fields like 'parties.shipper.name'
+      const parts = field.split('.');
+      let value: any = extractedData;
+      let fieldName = parts[parts.length - 1];
+      
+      for (const part of parts) {
+        if (value && typeof value === 'object' && part in value) {
+          value = value[part];
+        } else {
+          value = null;
+          break;
+        }
+      }
+      
+      if (value !== null && value !== undefined && value !== '') {
+        populatedCount++;
+        
+        // Add field quality assessment
+        totalQualityChecks++;
+        if (validateFieldFormat(fieldName, value)) {
+          qualityScore++;
+        }
+      }
+    }
+    
+    // Add consistency checks
+    // For example, check if gross weight > net weight
+    if (extractedData.shipment.grossWeight?.value && extractedData.shipment.netWeight?.value) {
+      totalQualityChecks++;
+      if (extractedData.shipment.grossWeight.value >= extractedData.shipment.netWeight.value) {
+        qualityScore++;
+      }
+    }
+    
+    // Calculate final confidence
+    const baseConfidence = populatedCount / criticalFields.length;
+    const qualityMultiplier = totalQualityChecks > 0 ? (0.8 + (0.2 * qualityScore / totalQualityChecks)) : 1.0;
+    
+    return Math.min(1.0, populatedCount > 0 ? Math.max(0.5, baseConfidence * qualityMultiplier) : 0.25);
   }
   
   /**

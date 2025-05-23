@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document Analysis</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            margin-top: 0;
+        }
+        .document-section {
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #eee;
+        }
+        .document-viewer {
+            width: 100%;
+            height: 600px;
+            border: 1px solid #ddd;
+            margin-top: 15px;
+        }
+        .file-input {
+            margin-bottom: 15px;
+        }
+        .notes {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 15px;
+        }
+        .notes h3 {
+            margin-top: 0;
+            color: #2c3e50;
+        }
+        .notes ul {
+            padding-left: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Document Analysis Tool</h1>
+        
+        <div class="document-section">
+            <h2>Invoice Document</h2>
+            <div class="file-input">
+                <input type="file" id="invoiceFile" accept=".pdf,.xls,.xlsx,.doc,.docx">
+                <button onclick="loadFile('invoiceFile', 'invoiceViewer')">Load Invoice</button>
+            </div>
+            <div id="invoiceViewer" class="document-viewer"></div>
+            <div class="notes">
+                <h3>Invoice Characteristics</h3>
+                <ul>
+                    <li>Invoice numbers typically follow format: CD970077514</li>
+                    <li>Contains itemized product list with prices</li>
+                    <li>Includes financial values with currency (e.g., 1,989.00 GBP)</li>
+                    <li>Contains shipper and consignee details</li>
+                    <li>May include payment terms like "Pro-forma basis"</li>
+                    <li>May include delivery terms like "FCA (Incoterms 2020)"</li>
+                </ul>
+            </div>
+        </div>
+        
+        <div class="document-section">
+            <h2>HAWB Document</h2>
+            <div class="file-input">
+                <input type="file" id="hawbFile" accept=".pdf,.xls,.xlsx,.doc,.docx">
+                <button onclick="loadFile('hawbFile', 'hawbViewer')">Load HAWB</button>
+            </div>
+            <div id="hawbViewer" class="document-viewer"></div>
+            <div class="notes">
+                <h3>HAWB Characteristics</h3>
+                <ul>
+                    <li>HAWB numbers typically in format: 448765</li>
+                    <li>Master AWB numbers often include airport codes: 098 LHR 80828764</li>
+                    <li>Contains routing information in format: DEL AI MAA AI</li>
+                    <li>Includes flight numbers like AI112 14 and AI2467 16</li>
+                    <li>Contains freight terms (e.g., "FREIGHT COLLECT")</li>
+                    <li>Includes dimensions in format: 2 x 057x031x020 m3</li>
+                </ul>
+            </div>
+        </div>
+        
+        <div class="document-section">
+            <h2>Bill of Entry Document</h2>
+            <div class="file-input">
+                <input type="file" id="boeFile" accept=".pdf,.xls,.xlsx,.doc,.docx">
+                <button onclick="loadFile('boeFile', 'boeViewer')">Load Bill of Entry</button>
+            </div>
+            <div id="boeViewer" class="document-viewer"></div>
+            <div class="notes">
+                <h3>Bill of Entry Characteristics</h3>
+                <ul>
+                    <li>Contains BE number and customs references</li>
+                    <li>Includes importer/exporter details</li>
+                    <li>Contains duty calculations and HSN codes</li>
+                    <li>May include customs remarks or special conditions</li>
+                    <li>Often includes detailed product classifications</li>
+                    <li>May contain job numbers in format like I/A/000577/25-26</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function loadFile(inputId, viewerId) {
+            const fileInput = document.getElementById(inputId);
+            const file = fileInput.files[0];
+            if (!file) {
+                alert('Please select a file first');
+                return;
+            }
+            
+            const viewer = document.getElementById(viewerId);
+            const fileType = file.name.split('.').pop().toLowerCase();
+            
+            if (fileType === 'pdf') {
+                const objectElement = document.createElement('object');
+                objectElement.width = '100%';
+                objectElement.height = '100%';
+                objectElement.data = URL.createObjectURL(file);
+                objectElement.type = 'application/pdf';
+                
+                viewer.innerHTML = '';
+                viewer.appendChild(objectElement);
+            } else if (['xls', 'xlsx'].includes(fileType)) {
+                viewer.innerHTML = '<p>Excel files cannot be previewed directly. Please analyze the file structure separately.</p>';
+            } else if (['doc', 'docx'].includes(fileType)) {
+                viewer.innerHTML = '<p>Word files cannot be previewed directly. Please analyze the file structure separately.</p>';
+            } else {
+                viewer.innerHTML = '<p>Unsupported file type for preview.</p>';
+            }
+        }
+    </script>
+</body>
+</html>
