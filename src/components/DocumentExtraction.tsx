@@ -17,24 +17,66 @@ function getExtractionMessage(current: number, total: number): string {
   
   // Messages for different stages of extraction
   const startMessages = [
+    // Technical messages
     "Our AI is analyzing your documents with advanced pattern recognition...",
     "Extracting data in a flash! This usually takes 1-2 minutes per document.",
     "DocLens AI is working its magic on your logistics documents...",
     "Sit tight! Our GenAI is carefully extracting key information...",
+    "Initializing document structure analysis for optimal extraction...",
+    "Scanning document layout to identify key information zones...",
+    "Preprocessing document text for enhanced extraction accuracy...",
+    "Applying OCR optimization for challenging document areas...",
+    "Detecting document type based on content patterns...",
+    "Analyzing document structure to locate critical information...",
+    "Mapping document sections to our extraction schema...",
+    "Identifying tabular data structures within your documents...",
+    "Preparing document for deep information extraction...",
+    "Initializing field detection algorithms for your document type...",
+    "Starting comprehensive data extraction process...",
+    "Applying industry-specific extraction patterns to your documents...",
+    "Beginning multi-stage extraction process for optimal results...",
   ];
   
   const midMessages = [
+    // Progress messages
     "Making good progress! The AI is identifying document-specific patterns...",
     "Looking good! We're validating extracted fields for accuracy...",
     "Almost halfway there! The AI is working through complex document formats...",
     "Processing nicely! We're normalizing extracted data for consistency...",
+    "Extracting key identifiers like invoice numbers and references...",
+    "Processing shipping details and logistics information...",
+    "Extracting party information for shippers and consignees...",
+    "Analyzing commercial terms and payment information...",
+    "Detecting and extracting product details and descriptions...",
+    "Processing customs information and regulatory data...",
+    "Extracting weights, dimensions and package details...",
+    "Identifying and extracting critical dates from your documents...",
+    "Cross-referencing extracted data for consistency...",
+    "Applying format standardization to extracted values...",
+    "Validating numerical data and performing unit conversions...",
+    "Correlating related fields for enhanced accuracy...",
+    "Extracting and validating address information...",
   ];
   
   const lateMessages = [
+    // Finishing messages
     "Nearly there! Calculating confidence scores for each extracted field...",
     "Final stretch! Performing quality checks on the extracted data...",
     "Just a moment more! Finalizing document type detection...",
     "Almost done! Preparing the extraction results for display...",
+    "Validating extraction results against expected patterns...",
+    "Performing final data consistency checks...",
+    "Applying business rules validation to extracted data...",
+    "Finalizing confidence scoring for all extracted fields...",
+    "Generating extraction summary and quality metrics...",
+    "Formatting extraction results for optimal readability...",
+    "Completing extraction process with final validation checks...",
+    "Applying field-level confidence scoring to extracted data...",
+    "Identifying potential extraction issues for review...",
+    "Finalizing document metadata and extraction statistics...",
+    "Preparing comprehensive extraction report...",
+    "Organizing extracted data into structured format...",
+    "Running final quality assurance checks on extracted data...",
   ];
   
   // Select message based on progress
@@ -54,6 +96,36 @@ function getDisplayValue(obj: any): string {
   if (!obj) return '';
   if (typeof obj === 'object' && 'value' in obj) return obj.value || '';
   return String(obj);
+}
+
+/**
+ * Recursively process data to make it safe for rendering in React
+ * Converts all confidence objects to their values
+ */
+function processDataForDisplay(data: any): any {
+  if (!data) return data;
+  
+  // Handle arrays
+  if (Array.isArray(data)) {
+    return data.map(item => processDataForDisplay(item));
+  }
+  
+  // Handle confidence objects
+  if (typeof data === 'object' && 'value' in data && 'confidence' in data) {
+    return data.value;
+  }
+  
+  // Handle regular objects
+  if (typeof data === 'object') {
+    const result: Record<string, any> = {};
+    for (const key in data) {
+      result[key] = processDataForDisplay(data[key]);
+    }
+    return result;
+  }
+  
+  // Return primitives as is
+  return data;
 }
 
 export function DocumentExtraction({ processedDocuments, onExtractionComplete }: DocumentExtractionProps) {
@@ -262,8 +334,18 @@ export function DocumentExtraction({ processedDocuments, onExtractionComplete }:
                           </div>
                         )}
                         
-                        {/* Key extracted fields */}
+                        {/* Document Type and Key extracted fields */}
                         <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                          {/* Always show document type */}
+                          <div className="col-span-2 mb-1 font-semibold text-gray-700">
+                            Document Type: <span className="uppercase">{result.data?.metadata?.documentType || 'UNKNOWN'}</span>
+                            {result.data?.metadata?.extractionConfidence && (
+                              <span className="ml-2 text-gray-500">
+                                Confidence: {(result.data.metadata.extractionConfidence).toFixed(2)}
+                              </span>
+                            )}
+                          </div>
+                          
                           {result.data?.identifiers?.invoiceNumber && (
                             <div>Invoice: <span className="font-medium">{getDisplayValue(result.data?.identifiers?.invoiceNumber)}</span></div>
                           )}
@@ -288,6 +370,9 @@ export function DocumentExtraction({ processedDocuments, onExtractionComplete }:
                             // Create a popup with the full extracted data
                             const popup = window.open('', '_blank', 'width=800,height=600');
                             if (popup) {
+                              // Process the data to make it safe for display
+                              const safeData = processDataForDisplay(result.data);
+                              
                               popup.document.write(`
                                 <html>
                                   <head>
@@ -302,7 +387,7 @@ export function DocumentExtraction({ processedDocuments, onExtractionComplete }:
                                     <p>Document Type: ${result.data?.metadata.documentType.toUpperCase()}</p>
                                     <p>Confidence: ${(result.data?.metadata.extractionConfidence || 0).toFixed(2)}</p>
                                     <h3>Extracted Data:</h3>
-                                    <pre>${JSON.stringify(result.data, null, 2)}</pre>
+                                    <pre>${JSON.stringify(safeData, null, 2)}</pre>
                                   </body>
                                 </html>
                               `);

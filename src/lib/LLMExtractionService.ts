@@ -29,6 +29,7 @@ export interface LogisticsExtractionSchema {
     deliveryNoteNumber: string | null;   // "178389" - Delivery reference
     jobNumber: string | null;            // "577" - Customs job
     beNumber: string | null;             // Bill of Entry number
+    packingListNumber: string | null;    // Packing list reference
   };
 
   // Party information (shipper/consignee)
@@ -38,6 +39,7 @@ export interface LogisticsExtractionSchema {
       address: string | null;            // Complete address
       country: string | null;            // "UNITED KINGDOM"
       phone: string | null;              // Contact information
+      email: string | null;              // Email address
     };
     consignee: {
       name: string | null;               // "SKI MANUFACTURING"
@@ -46,6 +48,8 @@ export interface LogisticsExtractionSchema {
       customerNumber: string | null;     // "10583"
       importerCode: string | null;       // "ADKFS7580G"
       adCode: string | null;             // "0510004"
+      phone: string | null;              // Contact information
+      email: string | null;              // Email address
     };
   };
 
@@ -353,15 +357,28 @@ You are a logistics document extraction system. Extract data with EXTREME precis
     "documentType": "",
     "extractionConfidence": 0.0,
     "criticalFields": [],
-    "missingFields": []
+    "missingFields": [],
+    "issues": []
   }
 }
 
 ## CONFIDENCE SCORING:
-- 0.95-1.0: Clear, unambiguous extraction
-- 0.85-0.94: High confidence with minor formatting issues
-- 0.70-0.84: Moderate confidence, some fields unclear
+- 0.95-1.0: Clear, unambiguous extraction with perfect pattern match
+- 0.85-0.94: High confidence with minor formatting variations
+- 0.70-0.84: Moderate confidence, some fields unclear but reasonable
 - 0.50-0.69: Low confidence, significant uncertainty
+
+For each extracted field, provide a confidence score using the format:
+{
+  "value": [extracted value],
+  "confidence": [score between 0.0-1.0]
+}
+
+Example:
+"invoiceNumber": {
+  "value": "CD970077514",
+  "confidence": 0.95
+}
 - 0.0-0.49: Very low confidence, manual review required
 
 ## CRITICAL REMINDERS:
@@ -447,6 +464,19 @@ ${processedContent}`
       // Clean and parse the JSON response
       const cleanedResponse = this.cleanJsonResponse(claudeResponse);
       const extractedData = JSON.parse(cleanedResponse);
+      
+      // Ensure metadata exists and document type is set correctly
+      if (!extractedData.metadata) {
+        extractedData.metadata = {
+          documentType: documentType,
+          extractionConfidence: 0.0,
+          criticalFields: [],
+          missingFields: [],
+          issues: []
+        };
+      } else {
+        extractedData.metadata.documentType = documentType;
+      }
       
       // Normalize extracted field values
       const normalizedData = this.normalizeExtractedData(extractedData);
@@ -591,6 +621,19 @@ ${sampleBase64}...`;
       try {
         // Parse the JSON response
         const extractedData = JSON.parse(cleanedJson) as LogisticsExtractionSchema;
+        
+        // Ensure metadata exists and document type is set correctly
+        if (!extractedData.metadata) {
+          extractedData.metadata = {
+            documentType: documentType,
+            extractionConfidence: 0.0,
+            criticalFields: [],
+            missingFields: [],
+            issues: []
+          };
+        } else {
+          extractedData.metadata.documentType = documentType;
+        }
         
         // Validate against expected document type
         const typeValidation = validateDocumentTypeData(extractedData, documentType);
@@ -863,7 +906,7 @@ Response:`, cleanedJson);
    * @param documentType The document type to get critical fields for
    * @returns Array of critical field paths
    */
-  private getCriticalFieldsForType(documentType: LogisticsDocumentType): string[] {
+  public getCriticalFieldsForType(documentType: LogisticsDocumentType): string[] {
     // Define critical fields for each document type
     const criticalFieldsByType: Record<string, string[]> = {
       'invoice': [
@@ -919,11 +962,11 @@ Response:`, cleanedJson);
   }
 
   /**
-   * Calculate a confidence score based on field-level confidence scores
+   * Calculate confidence score for extracted data
    * @param extractedData The extracted data to calculate confidence for
    * @returns A confidence score between 0 and 1
    */
-  private calculateConfidenceScore(extractedData: LogisticsExtractionSchema): number {
+  public calculateConfidenceScore(extractedData: LogisticsExtractionSchema): number {
     // Determine document type from metadata or try to detect it
     const docType = extractedData.metadata?.documentType || 'unknown';
     
@@ -1233,10 +1276,55 @@ export const useDocumentExtraction = () => {
         }
       );
       
-      setExtractionResults(results);
+      // Ensure document types from UI are applied to results
+      const resultsWithCorrectTypes = results.map((result, index) => {
+        // Make sure we have a corresponding document
+        if (documents[index]) {
+          const docType = documents[index].documentType;
+          
+          if (result.success && result.data) {
+            // Check if document type was unknown before
+            const wasUnknown = result.data.metadata?.documentType === 'unknown';
+            
+            // Create metadata if it doesn't exist
+            if (!result.data.metadata) {
+              result.data.metadata = {
+                documentType: docType,
+                extractionConfidence: 0.0,
+                criticalFields: [],
+                missingFields: [],
+                issues: []
+              };
+            } else {
+              // ALWAYS apply the document type from UI selection - this is critical
+              result.data.metadata.documentType = docType;
+              
+              // Ensure issues array exists
+              if (!result.data.metadata.issues) {
+                result.data.metadata.issues = [];
+              }
+              
+              // Add a helpful issue message if the document type was previously unknown
+              if (wasUnknown && !result.data.metadata.issues.some(issue => issue.includes('document type'))) {
+                result.data.metadata.issues.push('Document type set from user selection');
+              }
+            }
+            
+            // Update critical fields based on document type
+            const criticalFields = extractionService.getCriticalFieldsForType(docType);
+            result.data.metadata.criticalFields = criticalFields;
+            
+            // Recalculate confidence score with correct document type
+            result.data.metadata.extractionConfidence = extractionService.calculateConfidenceScore(result.data);
+          }
+        }
+        return result;
+      });
+      
+      setExtractionResults(resultsWithCorrectTypes);
       console.log(`🎉 All documents processed!`);
       
-      return results;
+      return resultsWithCorrectTypes;
       
     } catch (error) {
       console.error('❌ Document extraction pipeline failed:', error);
