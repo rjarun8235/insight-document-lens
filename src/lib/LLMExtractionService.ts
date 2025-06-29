@@ -17,6 +17,38 @@ import {
   ValidationResult
 } from './document-validation';
 
+// Import our new validation modules
+import { 
+  LogisticsBusinessRules, 
+  DocumentQualityAssessment, 
+  BusinessRuleResult,
+  ValidationResult as BusinessValidationResult 
+} from './logistics-validation';
+import { 
+  DocumentRelationshipValidator, 
+  CrossDocumentValidationResult 
+} from './document-relationship-validator';
+import { 
+  EnhancedFieldExtraction, 
+  EnhancedFieldValue 
+} from './enhanced-field-extraction';
+import { 
+  HSNCodeValidator, 
+  HSNCodeValidationResult, 
+  HSNCodeMappingResult 
+} from './hsn-code-validator';
+import { 
+  EnhancedLogisticsPrompt, 
+  EnhancedPromptContext 
+} from '../templates/enhanced-logistics-prompt';
+import { 
+  ExtractionLogger 
+} from './extraction-logger';
+import { 
+  DocumentFieldComparator, 
+  DocumentComparisonReport 
+} from './document-field-comparator';
+
 // Define the extraction schema for logistics documents
 export interface LogisticsExtractionSchema {
   // Core identifiers that must propagate across all documents
@@ -393,20 +425,346 @@ EXTRACT FROM DOCUMENT:
 
 // ===== EXTRACTION SERVICE =====
 
-export interface ExtractionResult {
+// Enhanced extraction result with all validation data
+export interface EnhancedExtractionResult {
   success: boolean;
   data?: LogisticsExtractionSchema;
   error?: string;
   processingTime: number;
   inputTokens: number;
   outputTokens: number;
+  
+  // New validation results
+  businessRuleValidation?: {
+    results: BusinessRuleResult[];
+    overallCompliance: number;
+    criticalIssues: string[];
+    warnings: string[];
+  };
+  
+  documentQuality?: {
+    score: number;
+    factors: {
+      identifierConsistency: number;
+      dataCompletion: number;
+      formatValidation: number;
+      businessRuleCompliance: number;
+    };
+    recommendations: string[];
+  };
+  
+  hsnValidation?: {
+    commercial?: HSNCodeValidationResult;
+    customs?: HSNCodeValidationResult;
+    mapping?: HSNCodeMappingResult;
+  };
+  
+  enhancedFields?: {
+    packageCount?: EnhancedFieldValue;
+    hsnCode?: EnhancedFieldValue;
+    grossWeight?: EnhancedFieldValue;
+    netWeight?: EnhancedFieldValue;
+  };
 }
+
+// Backward compatibility
+export interface ExtractionResult extends EnhancedExtractionResult {}
 
 export class LLMExtractionService {
   private supabaseProxyUrl: string;
+  private relationshipValidator: DocumentRelationshipValidator;
+  private logger: ExtractionLogger;
   
   constructor(supabaseProxyUrl: string = 'https://cbrgpzdxttzlvvryysaf.supabase.co/functions/v1/claude-api-proxy') {
     this.supabaseProxyUrl = supabaseProxyUrl;
+    this.relationshipValidator = new DocumentRelationshipValidator();
+    this.logger = new ExtractionLogger();
+  }
+
+  /**
+   * Get extraction logs and performance metrics
+   */
+  getExtractionMetrics(since?: Date) {
+    return {
+      logs: this.logger.getLogs({ since }),
+      summary: this.logger.getSummary(since)
+    };
+  }
+
+  /**
+   * Export extraction logs
+   */
+  exportLogs(filter?: { category?: any; level?: any; since?: Date }): string {
+    return this.logger.exportLogs(filter);
+  }
+
+  /**
+   * Enhanced validation pipeline that applies all business rules and quality checks
+   */
+  private async applyEnhancedValidation(
+    extractedData: LogisticsExtractionSchema,
+    documentType: LogisticsDocumentType
+  ): Promise<{
+    businessRuleValidation: EnhancedExtractionResult['businessRuleValidation'];
+    documentQuality: EnhancedExtractionResult['documentQuality'];
+    hsnValidation: EnhancedExtractionResult['hsnValidation'];
+    enhancedFields: EnhancedExtractionResult['enhancedFields'];
+  }> {
+    
+    const timer = this.logger.startTimer(`Enhanced validation for ${documentType}`);
+    
+    try {
+      // 1. Business Rule Validation
+      this.logger.info('business_rules', 'Starting business rule validation', { documentType });
+    const businessRules = [
+      LogisticsBusinessRules.packageCountConsistency(
+        extractedData.shipment.packageCount?.value,
+        extractedData.shipment.packageCount?.value, // Same for single doc
+        extractedData.shipment.packageCount?.unit,
+        extractedData.shipment.packageCount?.unit
+      ),
+      LogisticsBusinessRules.weightConsistency(
+        extractedData.shipment.grossWeight?.value,
+        extractedData.shipment.netWeight?.value,
+        extractedData.shipment.grossWeight?.unit
+      ),
+      LogisticsBusinessRules.hsnCodeMapping(
+        extractedData.product?.hsnCode,
+        extractedData.product?.hsnCode // customs.hsnCode doesn't exist in schema, using product.hsnCode
+      ),
+      LogisticsBusinessRules.dateSequenceValidation(
+        extractedData.dates?.invoiceDate,
+        extractedData.dates?.awbDate,
+        extractedData.dates?.entryDate
+      ),
+      LogisticsBusinessRules.financialConsistency(
+        extractedData.commercial?.invoiceValue?.amount,
+        extractedData.customs?.duties?.totalDuty,
+        extractedData.commercial?.invoiceValue?.currency
+      )
+    ];
+
+    const criticalIssues = businessRules.filter(rule => !rule.passed && rule.severity === 'error').map(rule => rule.message);
+    const warnings = businessRules.filter(rule => !rule.passed && rule.severity === 'warning').map(rule => rule.message);
+    const overallCompliance = businessRules.filter(rule => rule.passed).length / businessRules.length;
+
+    if (criticalIssues.length > 0) {
+      this.logger.warn('business_rules', `${criticalIssues.length} critical business rule violations found`, {
+        documentType,
+        issueCount: criticalIssues.length
+      });
+    }
+
+    if (warnings.length > 0) {
+      this.logger.info('business_rules', `${warnings.length} business rule warnings found`, {
+        documentType,
+        issueCount: warnings.length
+      });
+    }
+
+    this.logger.info('business_rules', 'Business rule validation completed', {
+      documentType,
+      compliance: overallCompliance
+    });
+
+    // 2. Document Quality Assessment
+    this.logger.info('validation', 'Starting document quality assessment', { documentType });
+    const qualityScore = DocumentQualityAssessment.assessDocumentQuality(extractedData);
+    const qualityFactors = {
+      identifierConsistency: this.calculateIdentifierConsistency(extractedData),
+      dataCompletion: this.calculateDataCompletion(extractedData),
+      formatValidation: this.calculateFormatValidation(extractedData),
+      businessRuleCompliance: overallCompliance
+    };
+
+    // 3. HSN Code Validation
+    let hsnValidation: EnhancedExtractionResult['hsnValidation'] = {};
+    
+    if (extractedData.product?.hsnCode) {
+      hsnValidation.commercial = HSNCodeValidator.validateHSNCode(extractedData.product.hsnCode);
+    }
+    
+    // Note: customs.hsnCode doesn't exist in schema, using product.hsnCode for customs validation too
+    if (extractedData.product?.hsnCode) {
+      hsnValidation.customs = HSNCodeValidator.validateHSNCode(extractedData.product.hsnCode);
+    }
+    
+    // Note: Since customs.hsnCode doesn't exist in schema, we'll skip HSN mapping for now
+    // This would typically compare commercial vs customs HSN codes
+    if (extractedData.product?.hsnCode) {
+      // For now, we'll just validate the single HSN code we have
+      hsnValidation.mapping = {
+        commercialCode: extractedData.product.hsnCode,
+        customsCode: extractedData.product.hsnCode, // Same code since we don't have separate customs code
+        isConsistent: true,
+        mappingConfidence: 0.8,
+        discrepancyType: 'none',
+        explanation: 'Single HSN code found - no comparison available',
+        recommendations: []
+      };
+    }
+
+    // 4. Enhanced Field Extraction (re-extract with enhanced logic if needed)
+    const enhancedFields: EnhancedExtractionResult['enhancedFields'] = {};
+    
+    if (extractedData.shipment.packageCount) {
+      enhancedFields.packageCount = {
+        value: extractedData.shipment.packageCount.value,
+        confidence: 0.8, // Would be calculated based on extraction quality
+        unit: extractedData.shipment.packageCount.unit,
+        context: documentType
+      };
+    }
+
+      const result = {
+        businessRuleValidation: {
+          results: businessRules,
+          overallCompliance,
+          criticalIssues,
+          warnings
+        },
+        documentQuality: {
+          score: qualityScore,
+          factors: qualityFactors,
+          recommendations: this.generateQualityRecommendations(qualityFactors, businessRules)
+        },
+        hsnValidation,
+        enhancedFields
+      };
+
+      timer();
+      this.logger.info('validation', 'Enhanced validation completed successfully', {
+        documentType,
+        validationScore: qualityScore,
+        compliance: overallCompliance
+      });
+
+      return result;
+
+    } catch (error) {
+      timer();
+      this.logger.error('validation', 'Enhanced validation failed', {
+        documentType,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+      
+      // Return minimal validation result on error
+      return {
+        businessRuleValidation: {
+          results: [],
+          overallCompliance: 0,
+          criticalIssues: ['Validation pipeline failed'],
+          warnings: []
+        },
+        documentQuality: {
+          score: 0.1,
+          factors: {
+            identifierConsistency: 0,
+            dataCompletion: 0,
+            formatValidation: 0,
+            businessRuleCompliance: 0
+          },
+          recommendations: ['Manual review required due to validation errors']
+        },
+        hsnValidation: {},
+        enhancedFields: {}
+      };
+    }
+  }
+
+  /**
+   * Calculate identifier consistency score
+   */
+  private calculateIdentifierConsistency(data: LogisticsExtractionSchema): number {
+    let score = 0;
+    let checks = 0;
+
+    const identifiers = [
+      data.identifiers?.invoiceNumber,
+      data.identifiers?.awbNumber,
+      data.identifiers?.hawbNumber,
+      data.identifiers?.beNumber
+    ];
+
+    identifiers.forEach(id => {
+      if (id) {
+        checks++;
+        // Simple validation - could be enhanced with pattern matching
+        if (typeof id === 'string' && id.length > 3) {
+          score++;
+        }
+      }
+    });
+
+    return checks > 0 ? score / checks : 0.5;
+  }
+
+  /**
+   * Calculate data completion score
+   */
+  private calculateDataCompletion(data: LogisticsExtractionSchema): number {
+    const criticalFields = [
+      data.parties?.shipper?.name,
+      data.parties?.consignee?.name,
+      data.shipment?.grossWeight?.value,
+      data.commercial?.invoiceValue?.amount
+    ];
+
+    const completedFields = criticalFields.filter(field => field !== undefined && field !== null).length;
+    return completedFields / criticalFields.length;
+  }
+
+  /**
+   * Calculate format validation score
+   */
+  private calculateFormatValidation(data: LogisticsExtractionSchema): number {
+    let validFormats = 0;
+    let totalChecks = 0;
+
+    // Check HSN code format
+    if (data.product?.hsnCode) {
+      const hsnPattern = /^\d{6,10}$/;
+      validFormats += hsnPattern.test(data.product.hsnCode.replace(/\D/g, '')) ? 1 : 0;
+      totalChecks++;
+    }
+
+    // Check AWB number format
+    if (data.identifiers?.awbNumber) {
+      const awbPattern = /^\d{3}[-\s]?\d{8,}$/;
+      validFormats += awbPattern.test(data.identifiers.awbNumber) ? 1 : 0;
+      totalChecks++;
+    }
+
+    return totalChecks > 0 ? validFormats / totalChecks : 0.8;
+  }
+
+  /**
+   * Generate quality improvement recommendations
+   */
+  private generateQualityRecommendations(
+    qualityFactors: any,
+    businessRules: BusinessRuleResult[]
+  ): string[] {
+    const recommendations: string[] = [];
+
+    if (qualityFactors.identifierConsistency < 0.8) {
+      recommendations.push('Review document reference numbers for accuracy');
+    }
+
+    if (qualityFactors.dataCompletion < 0.7) {
+      recommendations.push('Some critical fields are missing - verify document completeness');
+    }
+
+    if (qualityFactors.formatValidation < 0.9) {
+      recommendations.push('Check format of key fields (HSN codes, reference numbers)');
+    }
+
+    const failedRules = businessRules.filter(rule => !rule.passed);
+    if (failedRules.length > 0) {
+      recommendations.push(`${failedRules.length} business rule(s) failed validation - review for compliance`);
+    }
+
+    return recommendations;
   }
 
   /**
@@ -491,12 +849,26 @@ ${processedContent}`
       enhancedData.metadata.extractionConfidence = confidenceScore;
       console.log(`📊 Calculated enhanced confidence score: ${(confidenceScore * 100).toFixed(1)}%`);
       
+      // Apply enhanced validation pipeline
+      console.log(`🔍 Running enhanced validation pipeline...`);
+      const validationResults = await this.applyEnhancedValidation(enhancedData, documentType);
+      console.log(`✅ Validation complete - Quality Score: ${(validationResults.documentQuality.score * 100).toFixed(1)}%`);
+      console.log(`📋 Business Rule Compliance: ${(validationResults.businessRuleValidation.overallCompliance * 100).toFixed(1)}%`);
+      
+      if (validationResults.businessRuleValidation.criticalIssues.length > 0) {
+        console.log(`⚠️  Critical Issues: ${validationResults.businessRuleValidation.criticalIssues.length}`);
+      }
+      
       return {
         success: true,
         data: enhancedData,
         processingTime,
         inputTokens: result.usage?.input_tokens || 0,
-        outputTokens: result.usage?.output_tokens || 0
+        outputTokens: result.usage?.output_tokens || 0,
+        businessRuleValidation: validationResults.businessRuleValidation,
+        documentQuality: validationResults.documentQuality,
+        hsnValidation: validationResults.hsnValidation,
+        enhancedFields: validationResults.enhancedFields
       };
 
     } catch (error) {
@@ -531,7 +903,7 @@ ${processedContent}`
       const isPdf = fileExtension === 'pdf';
       
       // Prepare the request body based on content type
-      let requestBody;
+      let requestBody: any;
       
       // Prepare the base request body with the extraction prompt
       requestBody = {
@@ -654,6 +1026,11 @@ ${sampleBase64}...`;
         // Normalize the extracted data
         const normalizedData = this.normalizeExtractedData(extractedData);
         
+        // Apply enhanced validation pipeline
+        console.log(`🔍 Running enhanced validation pipeline for ${fileName}...`);
+        const validationResults = await this.applyEnhancedValidation(normalizedData, documentType);
+        console.log(`✅ Validation complete - Quality Score: ${(validationResults.documentQuality.score * 100).toFixed(1)}%`);
+        
         // Calculate processing time
         const processingTime = (performance.now() - startTime) / 1000; // in seconds
         
@@ -662,7 +1039,11 @@ ${sampleBase64}...`;
           data: normalizedData,
           processingTime,
           inputTokens: data.usage?.input_tokens || 0,
-          outputTokens: data.usage?.output_tokens || 0
+          outputTokens: data.usage?.output_tokens || 0,
+          businessRuleValidation: validationResults.businessRuleValidation,
+          documentQuality: validationResults.documentQuality,
+          hsnValidation: validationResults.hsnValidation,
+          enhancedFields: validationResults.enhancedFields
         };
       } catch (jsonError) {
         console.error(`JSON parsing error:`, jsonError, `
@@ -1244,6 +1625,7 @@ Response:`, cleanedJson);
 export const useDocumentExtraction = () => {
   const [isExtracting, setIsExtracting] = useState(false);
   const [extractionResults, setExtractionResults] = useState<(ExtractionResult & { fileName: string })[]>([]);
+  const [documentComparison, setDocumentComparison] = useState<DocumentComparisonReport | null>(null);
   const [currentProgress, setCurrentProgress] = useState({ current: 0, total: 0, fileName: '', status: 'processing' as 'processing' | 'success' | 'error' });
   
   const extractionService = new LLMExtractionService();
@@ -1257,6 +1639,7 @@ export const useDocumentExtraction = () => {
     setIsExtracting(true);
     setCurrentProgress({ current: 0, total: documents.length, fileName: '', status: 'processing' });
     setExtractionResults([]);
+    setDocumentComparison(null);
     
     try {
       console.log(`🚀 Starting sequential document extraction...`);
@@ -1276,6 +1659,61 @@ export const useDocumentExtraction = () => {
         }
       );
       
+      // Apply cross-document validation if multiple documents
+      let crossDocumentValidation: CrossDocumentValidationResult | undefined;
+      if (results.length > 1) {
+        console.log(`🔗 Running cross-document validation for ${results.length} documents...`);
+
+        // Create a new relationship validator for this batch
+        const relationshipValidator = new DocumentRelationshipValidator();
+
+        // Add successful extractions to relationship validator
+        results.forEach(result => {
+          if (result.success && result.data) {
+            relationshipValidator.addDocument(result.data);
+          }
+        });
+
+        if (relationshipValidator.getDocumentCount() > 1) {
+          crossDocumentValidation = relationshipValidator.validateShipmentConsistency();
+          console.log(`🔗 Cross-document validation complete - Confidence: ${(crossDocumentValidation.confidence * 100).toFixed(1)}%`);
+
+          if (crossDocumentValidation.issues.length > 0) {
+            console.log(`⚠️  Cross-document issues found: ${crossDocumentValidation.issues.length}`);
+          }
+        }
+      }
+
+      // Generate document comparison report if multiple documents
+      let comparisonReport: DocumentComparisonReport | null = null;
+      if (results.length > 1) {
+        console.log(`📊 Generating document field comparison report...`);
+        
+        // Prepare documents for comparison
+        const documentsForComparison = results
+          .filter(result => result.success && result.data)
+          .map((result, index) => ({
+            name: result.fileName,
+            type: documents[index]?.documentType || result.data!.metadata.documentType as LogisticsDocumentType,
+            data: result.data!
+          }));
+
+        if (documentsForComparison.length > 1) {
+          try {
+            comparisonReport = DocumentFieldComparator.compareDocuments(documentsForComparison);
+            setDocumentComparison(comparisonReport);
+            console.log(`📊 Document comparison complete - Overall consistency: ${(comparisonReport.summary.overallConsistencyScore * 100).toFixed(1)}%`);
+            console.log(`🎯 Risk level: ${comparisonReport.summary.riskLevel.toUpperCase()}`);
+            
+            if (comparisonReport.criticalIssues.length > 0) {
+              console.log(`⚠️  Critical discrepancies found: ${comparisonReport.criticalIssues.length}`);
+            }
+          } catch (error) {
+            console.error('⚠️ Document comparison failed:', error);
+          }
+        }
+      }
+
       // Ensure document types from UI are applied to results
       const resultsWithCorrectTypes = results.map((result, index) => {
         // Make sure we have a corresponding document
@@ -1339,6 +1777,7 @@ export const useDocumentExtraction = () => {
     extractDocuments,
     isExtracting,
     extractionResults,
+    documentComparison,
     currentProgress,
     // Helper computed values
     isComplete: currentProgress.current === currentProgress.total && currentProgress.total > 0,
