@@ -8,13 +8,14 @@ import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ReportExporter } from '../lib/report-exporter';
 import { DocumentFieldComparator } from '../lib/document-field-comparator';
-import { Download, FileText, BarChart3, CheckCircle, GitCompare } from 'lucide-react';
+import { Download, FileText, BarChart3, CheckCircle, GitCompare, Shield } from 'lucide-react';
 import type { EnhancedExtractionResult } from '../lib/LLMExtractionService';
+import { DocumentVerificationProcessor } from '../components/DocumentVerificationProcessor';
 
 export function DocumentProcessingDemo() {
   const [processedDocuments, setProcessedDocuments] = useState<ProcessedDocument[]>([]);
   const [showJsonOutput, setShowJsonOutput] = useState(false);
-  const [activeTab, setActiveTab] = useState<'results' | 'comparison' | 'validation' | 'performance'>('results');
+  const [activeTab, setActiveTab] = useState<'results' | 'comparison' | 'validation' | 'performance' | 'expert-verification'>('results');
   const [documentComparison, setDocumentComparison] = useState(null);
 
   const handleProcessedDocuments = (docs: ProcessedDocument[]) => {
@@ -85,6 +86,9 @@ export function DocumentProcessingDemo() {
       URL.revokeObjectURL(url);
     }
   };
+
+  const tabCount = 1 + (hasMultipleDocuments() ? 2 : 0) + (hasValidationData() ? 2 : 0);
+  const gridClass = `grid-cols-${tabCount}`;
 
   return (
     <QueryClientProvider>
@@ -203,7 +207,7 @@ export function DocumentProcessingDemo() {
               ) : (
                 // Enhanced Tabbed Interface
                 <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as any)} className="w-full">
-                  <TabsList className={`grid w-full ${hasMultipleDocuments() ? 'grid-cols-4' : hasValidationData() ? 'grid-cols-3' : 'grid-cols-1'}`}>
+                  <TabsList className={`grid w-full ${gridClass}`}>
                     <TabsTrigger value="results" className="flex items-center gap-2">
                       <FileText className="w-4 h-4" />
                       Extraction Results
@@ -212,6 +216,12 @@ export function DocumentProcessingDemo() {
                       <TabsTrigger value="comparison" className="flex items-center gap-2">
                         <GitCompare className="w-4 h-4" />
                         Document Comparison
+                      </TabsTrigger>
+                    )}
+                    {hasMultipleDocuments() && (
+                      <TabsTrigger value="expert-verification" className="flex items-center gap-2">
+                        <Shield className="w-4 h-4" />
+                        Expert Verification
                       </TabsTrigger>
                     )}
                     {hasValidationData() && (
@@ -366,6 +376,12 @@ export function DocumentProcessingDemo() {
                           </div>
                         );
                       })()}
+                    </TabsContent>
+                  )}
+
+                  {hasMultipleDocuments() && (
+                    <TabsContent value="expert-verification" className="mt-6">
+                      <DocumentVerificationProcessor extractionResults={getExtractionResults()} />
                     </TabsContent>
                   )}
 
