@@ -55,12 +55,21 @@ export class DocumentVerificationService {
   /**
    * Analyzes multiple document extraction payloads and generates a comprehensive verification report.
    * @param extractionResults - An array of extraction results from multiple documents.
+   * @param useMockData - If true, returns mock data instead of calling the API.
    * @returns A promise that resolves to a DocumentVerificationReport.
    */
   public async verifyDocuments(
-    extractionResults: Array<EnhancedExtractionResult & { fileName: string }>
+    extractionResults: Array<EnhancedExtractionResult & { fileName: string }>,
+    useMockData: boolean = false
   ): Promise<DocumentVerificationReport> {
     const startTime = Date.now();
+
+    if (useMockData) {
+      console.log(" MOCK MODE: Using mock data for verification report.");
+      // Simulate network delay
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      return this.generateMockVerificationReport(extractionResults);
+    }
 
     if (extractionResults.length < 2) {
       throw new Error('At least two documents are required for verification.');
@@ -99,6 +108,102 @@ export class DocumentVerificationService {
       console.error('Document verification failed:', error);
       throw new Error(`Failed to verify documents: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
+  }
+
+  /**
+   * Generates a realistic mock verification report for testing and demonstration.
+   * @param extractionResults - The array of document extraction data to make the mock report relevant.
+   * @returns A mock DocumentVerificationReport object.
+   */
+  private generateMockVerificationReport(
+    extractionResults: Array<EnhancedExtractionResult & { fileName: string }>
+  ): DocumentVerificationReport {
+    const docNames = extractionResults.map(d => d.fileName);
+    const docTypes = [...new Set(extractionResults.map(d => d.data?.metadata.documentType || 'unknown'))];
+
+    return {
+      summary: {
+        shipmentIdentifier: "AWB 098-80828764",
+        documentCount: extractionResults.length,
+        documentTypes: docTypes,
+        consistencyScore: 0.65,
+        riskAssessment: 'high',
+        expertSummary: "This shipment has multiple critical discrepancies, including a mismatch in HSN codes and package counts. This poses a high risk for customs delays and potential fines. Immediate manual review and correction are required before proceeding.",
+      },
+      discrepancies: [
+        {
+          fieldName: "HSN Code",
+          category: 'critical',
+          impact: "Incorrect customs duties will be applied, leading to penalties and shipment delays.",
+          documents: [
+            { documentName: docNames.find(n => n.includes('SKI.xls')) || docNames[0], value: "73201019" },
+            { documentName: docNames.find(n => n.includes('Xerox')) || docNames[1], value: "73261990" },
+          ],
+          recommendation: "Verify the correct HSN code with the engineering/product team and update all documents to match.",
+        },
+        {
+          fieldName: "Package Count",
+          category: 'important',
+          impact: "Mismatch can lead to confusion at receiving, and suggests part of the shipment may be missing or incorrectly documented.",
+          documents: [
+             { documentName: docNames.find(n => n.includes('HAWB')) || docNames[0], value: "2" },
+             { documentName: docNames.find(n => n.includes('Xerox')) || docNames[2], value: "4" },
+          ],
+          recommendation: "Physically count the packages and amend the documentation to reflect the actual count.",
+        },
+        {
+          fieldName: "Shipper Address",
+          category: 'minor',
+          impact: "Minor risk of confusion, but could delay courier or official correspondence.",
+          documents: [
+            { documentName: docNames[0], value: "LOWER MIDLETON STREET" },
+            { documentName: docNames[1], value: "LOWER MIDDLETON STREET" },
+          ],
+          recommendation: "Standardize address across all templates for future shipments. No immediate action required for this shipment.",
+        },
+      ],
+      insights: [
+        {
+          title: "Customs Compliance Risk",
+          description: "The HSN code discrepancy is a major red flag for customs authorities and will likely trigger an inspection, causing significant delays.",
+          category: 'customs',
+          severity: 'critical',
+        },
+        {
+          title: "Operational Inefficiency",
+          description: "Inconsistent data across documents (e.g., weights, package counts) suggests a lack of process control, which can lead to receiving errors and inventory mismatches.",
+          category: 'operational',
+          severity: 'warning',
+        },
+         {
+          title: "Financial Inaccuracy",
+          description: "The difference in gross weight (36kg vs 37kg) may result in minor discrepancies in freight charges.",
+          category: 'financial',
+          severity: 'info',
+        }
+      ],
+      recommendations: [
+        {
+          action: "Immediately correct the HSN code on all relevant documents.",
+          priority: 'high',
+          reasoning: "To avoid customs penalties and delays, which is the most significant risk.",
+        },
+        {
+          action: "Verify the physical package count against all documents.",
+          priority: 'medium',
+          reasoning: "To ensure the full shipment is accounted for before it leaves the facility.",
+        },
+        {
+          action: "Update internal templates with standardized shipper/consignee information.",
+          priority: 'low',
+          reasoning: "To prevent minor data entry errors in future shipments.",
+        },
+      ],
+      metadata: {
+        analysisTimestamp: new Date().toISOString(),
+        processingTime: 1.23, // Mock processing time
+      },
+    };
   }
 
   /**
@@ -234,7 +339,10 @@ export const useDocumentVerification = () => {
 
   const verificationService = new DocumentVerificationService();
 
-  const verifyDocuments = async (documents: Array<EnhancedExtractionResult & { fileName: string }>) => {
+  const verifyDocuments = async (
+    documents: Array<EnhancedExtractionResult & { fileName: string }>,
+    options: { useMockData?: boolean } = {}
+    ) => {
     if (documents.length < 2) {
       setVerificationError("At least two documents are needed for verification.");
       return;
@@ -245,7 +353,7 @@ export const useDocumentVerification = () => {
     setVerificationError(null);
 
     try {
-      const report = await verificationService.verifyDocuments(documents);
+      const report = await verificationService.verifyDocuments(documents, options.useMockData);
       setVerificationReport(report);
     } catch (error) {
       setVerificationError(error instanceof Error ? error.message : "An unknown error occurred during verification.");

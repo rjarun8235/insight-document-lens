@@ -3,8 +3,12 @@ import { useDocumentVerification } from '../lib/document-verification-service';
 import { DocumentVerificationReport } from './DocumentVerificationReport';
 import { EnhancedExtractionResult } from '../lib/LLMExtractionService';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Card, CardContent } from '@/components/ui/card';
-import { Loader2, AlertCircle } from 'lucide-react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Loader2, AlertCircle, PlayCircle, Bug, TestTube2 } from 'lucide-react';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
 
 interface DocumentVerificationProcessorProps {
   extractionResults: Array<EnhancedExtractionResult & { fileName: string }>;
@@ -23,64 +27,160 @@ export const DocumentVerificationProcessor: React.FC<DocumentVerificationProcess
   } = useDocumentVerification();
 
   const [hasTriggered, setHasTriggered] = useState(false);
+  const [showDebug, setShowDebug] = useState(true);
+  const [useMockData, setUseMockData] = useState(true); // Default to true for development
 
   // Automatically trigger verification when sufficient extraction results are available.
   useEffect(() => {
+    console.log('[VerificationProcessor] useEffect triggered. Dependencies:', {
+      extractionResultsCount: extractionResults.length,
+      isVerifying,
+      verificationReportExists: !!verificationReport,
+      hasTriggered,
+      useMockData,
+    });
     const successfulExtractions = extractionResults.filter(r => r.success);
     if (successfulExtractions.length > 1 && !isVerifying && !verificationReport && !hasTriggered) {
-      verifyDocuments(successfulExtractions);
+      console.log(`[VerificationProcessor] Auto-triggering verification (Mock: ${useMockData})...`);
+      verifyDocuments(successfulExtractions, { useMockData });
       setHasTriggered(true);
     }
-  }, [extractionResults, isVerifying, verificationReport, hasTriggered, verifyDocuments]);
+  }, [extractionResults, isVerifying, verificationReport, hasTriggered, verifyDocuments, useMockData]);
+
+  const handleManualVerification = () => {
+    console.log(`[VerificationProcessor] Manual verification triggered (Mock: ${useMockData}).`);
+    const successfulExtractions = extractionResults.filter(r => r.success);
+    if (successfulExtractions.length > 1) {
+      verifyDocuments(successfulExtractions, { useMockData });
+      setHasTriggered(true);
+    } else {
+      console.warn('[VerificationProcessor] Manual trigger clicked, but not enough successful extractions.');
+    }
+  };
 
   const successfulExtractionsCount = extractionResults.filter(r => r.success).length;
 
-  // Do not render the component if there are not enough documents to compare.
-  if (successfulExtractionsCount < 2) {
-    return null;
-  }
+  const DebugView = () => (
+    <Card className="mt-4 bg-gray-50 border-dashed">
+      <CardHeader>
+        <CardTitle className="flex items-center justify-between text-sm">
+          <span>Debug Information</span>
+          <Button variant="ghost" size="sm" onClick={() => setShowDebug(false)}>Close</Button>
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <pre className="text-xs bg-white p-2 rounded overflow-auto max-h-60">
+          {JSON.stringify({
+            isVerifying,
+            hasTriggered,
+            useMockData,
+            verificationError,
+            reportExists: !!verificationReport,
+            successfulExtractionsCount,
+            extractionResults: extractionResults.map(r => ({ fileName: r.fileName, success: r.success })),
+          }, null, 2)}
+        </pre>
+      </CardContent>
+    </Card>
+  );
 
-  // Render loading state while verification is in progress.
-  if (isVerifying) {
-    return (
-      <Card className="mt-8">
-        <CardContent className="pt-6">
-          <div className="flex flex-col items-center justify-center p-12 space-y-4 text-center">
-            <Loader2 className="h-12 w-12 animate-spin text-blue-600" />
-            <h3 className="text-xl font-semibold">Running Cross-Document Verification...</h3>
-            <p className="text-muted-foreground">
-              Our AI is analyzing all documents for discrepancies, insights, and compliance issues.
-              <br />
-              This may take a moment.
+  const renderContent = () => {
+    if (successfulExtractionsCount < 2) {
+        return (
+          <Alert>
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Verification Pending</AlertTitle>
+            <AlertDescription>
+              At least two documents must be successfully extracted to run cross-document verification.
+            </AlertDescription>
+          </Alert>
+        );
+      }
+    
+      if (isVerifying) {
+        return (
+          <Card className="mt-8">
+            <CardContent className="pt-6">
+              <div className="flex flex-col items-center justify-center p-12 space-y-4 text-center">
+                <Loader2 className="h-12 w-12 animate-spin text-blue-600" />
+                <h3 className="text-xl font-semibold">Running Cross-Document Verification...</h3>
+                <p className="text-muted-foreground">
+                  Our AI is analyzing all documents for discrepancies, insights, and compliance issues.
+                  <br />
+                  This may take a moment.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        );
+      }
+    
+      if (verificationError) {
+        return (
+          <Alert variant="destructive" className="mt-8">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Verification Failed</AlertTitle>
+            <AlertDescription className="flex flex-col gap-4">
+              <span>There was an error while verifying the documents: {verificationError}</span>
+              <Button variant="secondary" onClick={handleManualVerification} className="w-fit">
+                Retry Verification
+              </Button>
+            </AlertDescription>
+          </Alert>
+        );
+      }
+    
+      if (verificationReport) {
+        return (
+            <div className="mt-8">
+                <DocumentVerificationReport report={verificationReport} />
+            </div>
+        );
+      }
+    
+      // Fallback UI: Ready to verify
+      return (
+        <Card className="mt-8 text-center">
+          <CardContent className="pt-6 p-12">
+            <PlayCircle className="mx-auto h-12 w-12 text-green-600 mb-4" />
+            <h3 className="text-xl font-semibold">Verification Ready</h3>
+            <p className="text-muted-foreground mb-6">
+              Cross-document verification is ready to run on {successfulExtractionsCount} documents.
             </p>
-          </div>
-        </CardContent>
-      </Card>
-    );
+            <Button onClick={handleManualVerification}>
+              Start Verification
+            </Button>
+          </CardContent>
+        </Card>
+      );
   }
 
-  // Render error state if verification fails.
-  if (verificationError) {
-    return (
-      <Alert variant="destructive" className="mt-8">
-        <AlertCircle className="h-4 w-4" />
-        <AlertTitle>Verification Failed</AlertTitle>
-        <AlertDescription>
-          There was an error while verifying the documents: {verificationError}
-        </AlertDescription>
-      </Alert>
-    );
-  }
-
-  // Render the verification report once it's available.
-  if (verificationReport) {
-    return (
-        <div className="mt-8">
-            <DocumentVerificationReport report={verificationReport} />
+  return (
+    <div>
+      <div className="flex items-center justify-end space-x-4 p-2 bg-gray-100 rounded-md mb-4">
+        {useMockData && (
+            <Badge variant="outline" className="border-yellow-500 text-yellow-600 bg-yellow-50 flex items-center gap-2">
+                <TestTube2 className="h-4 w-4" />
+                Mock Mode Active
+            </Badge>
+        )}
+        <div className="flex items-center space-x-2">
+            <Switch
+                id="mock-data-toggle"
+                checked={useMockData}
+                onCheckedChange={setUseMockData}
+            />
+            <Label htmlFor="mock-data-toggle">Use Mock Data</Label>
         </div>
-    );
-  }
-
-  // Fallback state, typically not seen due to automatic triggering.
-  return null;
+      </div>
+        {renderContent()}
+        {showDebug ? (
+            <DebugView />
+        ) : (
+            <Button variant="outline" size="sm" onClick={() => setShowDebug(true)} className="mt-4 flex items-center gap-2">
+                <Bug className="h-4 w-4" /> Show Debug Info
+            </Button>
+        )}
+    </div>
+  )
 };
