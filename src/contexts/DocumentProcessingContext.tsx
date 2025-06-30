@@ -31,6 +31,7 @@ import {
   VerificationOptions
 } from '../lib/services/document-verification.service';
 import { LogisticsDocumentType } from '../lib/document-types';
+import FileParser, { detectFileFormat } from '../lib/FileParser';
 
 // ===== TYPE DEFINITIONS =====
 
@@ -450,23 +451,35 @@ export const DocumentProcessingProvider: React.FC<{ children: ReactNode }> = ({ 
       payload: { files, documentTypes }
     });
     
-    // Automatically read file contents
+    // Process each file with the appropriate parser
     files.forEach(async (file) => {
       try {
-        const content = await readFileAsText(file);
         const id = state.documents.find(doc => doc.name === file.name)?.id;
+        if (!id) return;
         
-        if (id) {
+        // Detect file format
+        const fileFormat = detectFileFormat(file.name);
+        console.log(`Processing ${file.name} as ${fileFormat} format`);
+        
+        // Parse file based on its format
+        const result = await FileParser.parseFile(file);
+        
+        if (result.success) {
+          // Use content for text-based files or base64 for binary files
+          const content = result.content || result.base64 || '';
+          
           dispatch({
             type: 'SET_DOCUMENT_CONTENT',
             payload: { id, content }
           });
+        } else {
+          throw new Error(result.error || 'Failed to parse file');
         }
       } catch (error) {
-        console.error(`Error reading file ${file.name}:`, error);
+        console.error(`Error processing file ${file.name}:`, error);
         dispatch({
           type: 'SET_ERROR',
-          payload: { error: `Error reading file ${file.name}: ${error instanceof Error ? error.message : String(error)}` }
+          payload: { error: `Error processing file ${file.name}: ${error instanceof Error ? error.message : String(error)}` }
         });
       }
     });
@@ -833,28 +846,7 @@ export const DocumentProcessingProvider: React.FC<{ children: ReactNode }> = ({ 
 
 // ===== HELPER FUNCTIONS =====
 
-/**
- * Reads a file as text
- */
-const readFileAsText = (file: File): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    
-    reader.onload = (event) => {
-      if (event.target?.result) {
-        resolve(event.target.result as string);
-      } else {
-        reject(new Error('Failed to read file'));
-      }
-    };
-    
-    reader.onerror = () => {
-      reject(new Error('Error reading file'));
-    };
-    
-    reader.readAsText(file);
-  });
-};
+// Helper functions moved to FileParser.ts
 
 // ===== CUSTOM HOOK =====
 

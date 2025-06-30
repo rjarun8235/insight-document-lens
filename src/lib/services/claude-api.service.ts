@@ -7,9 +7,19 @@
  */
 
 // Types for request/response
+export interface ClaudeContent {
+  type: string;
+  text?: string;
+  source?: {
+    type: string;
+    media_type: string;
+    data: string;
+  };
+}
+
 export interface ClaudeMessage {
   role: 'user' | 'assistant' | 'system';
-  content: string;
+  content: string | ClaudeContent[];
 }
 
 export interface ClaudeRequestOptions {
@@ -107,21 +117,46 @@ export class ClaudeApiService {
    * 
    * @param prompt - The prompt to send to Claude
    * @param options - Options for the request
+   * @param documentFile - Optional PDF file as base64 string with mime type
    * @returns The Claude API response
    */
   async sendExtractionRequest(
     prompt: string, 
-    options: ClaudeRequestOptions = {}
+    options: ClaudeRequestOptions = {},
+    documentFile?: { base64: string, mimeType: string }
   ): Promise<ClaudeResponse> {
     const mergedOptions = { ...this.defaultOptions, ...options };
     
+    // Create the request with appropriate content format
     const request: ClaudeExtractionRequest = {
-      messages: [{ role: 'user', content: prompt }],
+      messages: [],
       temperature: mergedOptions.temperature,
       max_tokens: mergedOptions.max_tokens,
       top_p: mergedOptions.top_p,
       top_k: mergedOptions.top_k
     };
+    
+    // If document file is provided, use document content type
+    if (documentFile && documentFile.base64 && documentFile.mimeType === 'application/pdf') {
+      console.log('Using document content type for PDF extraction');
+      request.messages = [{
+        role: 'user',
+        content: [
+          { type: 'text', text: prompt },
+          { 
+            type: 'document',
+            source: {
+              type: 'base64',
+              media_type: 'application/pdf',
+              data: documentFile.base64
+            }
+          }
+        ]
+      }];
+    } else {
+      // Otherwise use standard text content
+      request.messages = [{ role: 'user', content: prompt }];
+    }
 
     return this.executeWithRetry(
       () => this.sendRequest('/extraction', request),

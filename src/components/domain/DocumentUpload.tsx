@@ -92,7 +92,7 @@ interface DocumentUploadProps {
  * 
  * A presentation-only component for uploading and managing documents.
  */
-const DocumentUpload: React.FC<DocumentUploadProps> = ({ className }) => {
+const DocumentUpload = ({ className }: DocumentUploadProps): JSX.Element => {
   // Get document processing context
   const {
     state,
@@ -212,7 +212,7 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({ className }) => {
             Drag and drop your documents here
           </p>
           <p className="text-xs text-muted-foreground mb-4">
-            Supported formats: PDF, DOCX, TXT, PNG, JPG
+            Supported formats: PDF, DOCX, TXT, PNG, JPG, XLS, XLSX, CSV
           </p>
           <Button
             type="button"
@@ -227,7 +227,7 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({ className }) => {
             ref={fileInputRef}
             type="file"
             multiple
-            accept=".pdf,.docx,.txt,.png,.jpg,.jpeg"
+            accept=".pdf,.docx,.txt,.png,.jpg,.jpeg,.xls,.xlsx,.csv"
             className="hidden"
             onChange={handleFileInputChange}
           />

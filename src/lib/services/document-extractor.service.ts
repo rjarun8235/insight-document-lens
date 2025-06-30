@@ -127,20 +127,46 @@ export class DocumentExtractorService {
     try {
       console.log(`🔍 Extracting data from ${document.name} (${document.documentType})...`);
       
-      // Preprocess document content
-      const processedContent = preprocessDocumentContent(document.content, document.documentType);
+      // Determine file format based on name
+      const fileExtension = document.name.split('.').pop()?.toLowerCase() || '';
+      const isPdf = ['pdf'].includes(fileExtension);
+      const isExcel = ['xls', 'xlsx'].includes(fileExtension);
+      const isCsv = ['csv'].includes(fileExtension);
+      
+      // Preprocess document content based on file type
+      let processedContent = document.content;
+      
+      // For non-PDF files, preprocess the content
+      if (!isPdf) {
+        processedContent = preprocessDocumentContent(document.content, document.documentType);
+      }
       
       // Build the extraction prompt
       const prompt = this.buildExtractionPrompt(document.documentType, processedContent, options);
       
-      // Send the prompt to Claude
-      const claudeResponse = await this.claudeApiService.sendExtractionRequest(
-        prompt,
-        {
-          temperature: options.temperature || 0.1,
-          max_tokens: options.maxTokens || 4000
-        }
-      );
+      let claudeResponse;
+      
+      // Handle PDFs using document content type
+      if (isPdf && document.content) {
+        console.log('Using document content type for PDF extraction');
+        claudeResponse = await this.claudeApiService.sendExtractionRequest(
+          prompt,
+          {
+            temperature: options.temperature || 0.1,
+            max_tokens: options.maxTokens || 4000
+          },
+          { base64: document.content, mimeType: 'application/pdf' }
+        );
+      } else {
+        // For non-PDF files, use standard text extraction
+        claudeResponse = await this.claudeApiService.sendExtractionRequest(
+          prompt,
+          {
+            temperature: options.temperature || 0.1,
+            max_tokens: options.maxTokens || 4000
+          }
+        );
+      }
       
       // Extract the response text
       const responseText = this.claudeApiService.extractTextContent(claudeResponse);
