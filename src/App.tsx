@@ -1,13 +1,15 @@
-
 // @ts-nocheck - Disables TypeScript checking for this file to resolve React 18 compatibility issues with UI components
 import * as React from 'react';
 import { Toaster as CustomToaster } from "@/components/ui/toaster";
 import { Toaster as SonnerToaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import HomePage from "./pages/HomePage";
 import NotFound from "./pages/NotFound";
 import { DocumentProcessingDemo } from "./pages/DocumentProcessingDemo";
+
+const queryClient = new QueryClient();
 
 /**
  * App Component
@@ -15,7 +17,7 @@ import { DocumentProcessingDemo } from "./pages/DocumentProcessingDemo";
  * Main application component with routing and UI providers.
  */
 const App: React.FC = () => (
-  <React.Suspense fallback={<div>Loading...</div>}>
+  <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <CustomToaster />
       <SonnerToaster />
@@ -28,7 +30,7 @@ const App: React.FC = () => (
         </Routes>
       </BrowserRouter>
     </TooltipProvider>
-  </React.Suspense>
+  </QueryClientProvider>
 );
 
 export default App;
