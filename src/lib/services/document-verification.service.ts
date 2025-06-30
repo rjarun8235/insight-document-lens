@@ -71,7 +71,12 @@ export interface DocumentVerificationReport {
  * Represents a field mapping configuration
  */
 interface FieldMapping {
-  paths: Record<LogisticsDocumentType, string>;
+  /**
+   * Maps a subset of document types to their field paths.
+   * We use Partial<> because not every field exists in every
+   * document type (e.g. an invoice has no HAWB number).
+   */
+  paths: Partial<Record<LogisticsDocumentType, string>>;
   category: 'critical' | 'important' | 'minor';
   comparisonType: 'exact' | 'numeric' | 'date' | 'text';
 }
