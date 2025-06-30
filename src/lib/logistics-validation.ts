@@ -80,7 +80,26 @@ export class LogisticsBusinessRules {
   }
 
   static hsnCodeMapping(commercialHSN?: string, customsHSN?: string): BusinessRuleResult {
-    if (!commercialHSN || !customsHSN) {
+    // helper to extract a plain string from optional object/number formats
+    const normalizeHSN = (code: unknown): string | null => {
+      if (code == null) return null;
+      // Object with { value: 'xxxxx', … }
+      if (typeof code === 'object' && 'value' in (code as any)) {
+        code = (code as any).value;
+      }
+      // number → string
+      if (typeof code === 'number') {
+        code = String(code);
+      }
+      if (typeof code !== 'string') return null;
+      const trimmed = code.trim();
+      return trimmed.length ? trimmed : null;
+    };
+
+    const commercialRaw = normalizeHSN(commercialHSN);
+    const customsRaw    = normalizeHSN(customsHSN);
+
+    if (!commercialRaw || !customsRaw) {
       return {
         rule: 'hsnCodeMapping',
         passed: true,
@@ -91,8 +110,8 @@ export class LogisticsBusinessRules {
     }
 
     // Clean HSN codes (remove spaces, special characters)
-    const cleanCommercial = commercialHSN.replace(/\D/g, '');
-    const cleanCustoms = customsHSN.replace(/\D/g, '');
+    const cleanCommercial = commercialRaw.replace(/\D/g, '');
+    const cleanCustoms    = customsRaw.replace(/\D/g, '');
 
     // Check different levels of HSN code matching
     const exactMatch = cleanCommercial === cleanCustoms;
@@ -107,23 +126,23 @@ export class LogisticsBusinessRules {
     if (exactMatch) {
       passed = true;
       confidence = 0.99;
-      message = `Exact HSN code match: ${commercialHSN}`;
+      message = `Exact HSN code match: ${commercialRaw}`;
     } else if (chapter6Match) {
       passed = true;
       confidence = 0.9;
-      message = `HSN codes match at 6-digit level (same sub-heading): Commercial(${commercialHSN}) vs Customs(${customsHSN})`;
+      message = `HSN codes match at 6-digit level (same sub-heading): Commercial(${commercialRaw}) vs Customs(${customsRaw})`;
     } else if (chapter4Match) {
       passed = true;
       confidence = 0.7;
-      message = `HSN codes match at 4-digit level (same heading): Commercial(${commercialHSN}) vs Customs(${customsHSN})`;
+      message = `HSN codes match at 4-digit level (same heading): Commercial(${commercialRaw}) vs Customs(${customsRaw})`;
     } else if (chapter2Match) {
       passed = false;
       confidence = 0.4;
-      message = `HSN codes only match at 2-digit level (same chapter): Commercial(${commercialHSN}) vs Customs(${customsHSN}) - May need review`;
+      message = `HSN codes only match at 2-digit level (same chapter): Commercial(${commercialRaw}) vs Customs(${customsRaw}) - May need review`;
     } else {
       passed = false;
       confidence = 0.1;
-      message = `HSN code mismatch: Commercial(${commercialHSN}) vs Customs(${customsHSN}) - Different product classifications`;
+      message = `HSN code mismatch: Commercial(${commercialRaw}) vs Customs(${customsRaw}) - Different product classifications`;
     }
 
     return {
