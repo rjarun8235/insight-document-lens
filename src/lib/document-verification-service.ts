@@ -27,7 +27,7 @@ export interface DocumentVerificationReport {
   }>;
   insights: Array<{
     title: string;
-    description: string;
+    description:string;
     category: 'compliance' | 'operational' | 'financial' | 'customs';
     severity: 'info' | 'warning' | 'critical';
   }>;
@@ -54,7 +54,7 @@ export class DocumentVerificationService {
 
   /**
    * Analyzes multiple document extraction payloads and generates a comprehensive verification report.
-   * @param extractionResults - An array of extraction results from multiple documents.
+   * @param extractionResults - An array of extraction results from multiple documents, can include failures.
    * @param useMockData - If true, returns mock data instead of calling the API.
    * @returns A promise that resolves to a DocumentVerificationReport.
    */
@@ -63,19 +63,21 @@ export class DocumentVerificationService {
     useMockData: boolean = false
   ): Promise<DocumentVerificationReport> {
     const startTime = Date.now();
+    const successfulExtractions = extractionResults.filter(r => r.success && r.data);
+
+    if (successfulExtractions.length < 2) {
+      throw new Error('At least two documents must be successfully extracted to run verification.');
+    }
 
     if (useMockData) {
       console.log(" MOCK MODE: Using mock data for verification report.");
       // Simulate network delay
       await new Promise(resolve => setTimeout(resolve, 1000));
+      // Pass the full results so the mock can be aware of failures
       return this.generateMockVerificationReport(extractionResults);
     }
 
-    if (extractionResults.length < 2) {
-      throw new Error('At least two documents are required for verification.');
-    }
-
-    const prompt = this.buildVerificationPrompt(extractionResults);
+    const prompt = this.buildVerificationPrompt(successfulExtractions);
 
     try {
       const response = await fetch(`${this.claudeProxyUrl}/extraction`, {
@@ -89,12 +91,22 @@ export class DocumentVerificationService {
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(`API Error: ${errorData.error?.message || response.statusText}`);
+        let errorBody = 'Could not parse error response.';
+        try {
+            errorBody = await response.json();
+        } catch (e) {
+            // Ignore if response is not JSON
+        }
+        throw new Error(`API Error (${response.status}): ${JSON.stringify(errorBody)}`);
       }
 
       const result = await response.json();
-      const llmResponseText = result.content[0].text;
+      const llmResponseText = result.content?.[0]?.text;
+
+      if (!llmResponseText) {
+          throw new Error("Received an empty or invalid response from the LLM API.");
+      }
+
       const cleanedJson = this.cleanJsonResponse(llmResponseText);
       const verificationReport = JSON.parse(cleanedJson) as DocumentVerificationReport;
 
@@ -112,57 +124,21 @@ export class DocumentVerificationService {
 
   /**
    * Generates a realistic mock verification report for testing and demonstration.
-   * @param extractionResults - The array of document extraction data to make the mock report relevant.
+   * This version is aware of partial failures in the extraction process.
+   * @param extractionResults - The full array of document extraction data.
    * @returns A mock DocumentVerificationReport object.
    */
   private generateMockVerificationReport(
     extractionResults: Array<EnhancedExtractionResult & { fileName: string }>
   ): DocumentVerificationReport {
-    const docNames = extractionResults.map(d => d.fileName);
-    const docTypes = [...new Set(extractionResults.map(d => d.data?.metadata.documentType || 'unknown'))];
+    const successfulExtractions = extractionResults.filter(d => d.success && d.data);
+    const failedExtractions = extractionResults.filter(d => !d.success);
+    
+    const docNames = successfulExtractions.map(d => d.fileName);
+    const docTypes = [...new Set(successfulExtractions.map(d => d.data?.metadata.documentType || 'unknown'))];
 
-    return {
-      summary: {
-        shipmentIdentifier: "AWB 098-80828764",
-        documentCount: extractionResults.length,
-        documentTypes: docTypes,
-        consistencyScore: 0.65,
-        riskAssessment: 'high',
-        expertSummary: "This shipment has multiple critical discrepancies, including a mismatch in HSN codes and package counts. This poses a high risk for customs delays and potential fines. Immediate manual review and correction are required before proceeding.",
-      },
-      discrepancies: [
-        {
-          fieldName: "HSN Code",
-          category: 'critical',
-          impact: "Incorrect customs duties will be applied, leading to penalties and shipment delays.",
-          documents: [
-            { documentName: docNames.find(n => n.includes('SKI.xls')) || docNames[0], value: "73201019" },
-            { documentName: docNames.find(n => n.includes('Xerox')) || docNames[1], value: "73261990" },
-          ],
-          recommendation: "Verify the correct HSN code with the engineering/product team and update all documents to match.",
-        },
-        {
-          fieldName: "Package Count",
-          category: 'important',
-          impact: "Mismatch can lead to confusion at receiving, and suggests part of the shipment may be missing or incorrectly documented.",
-          documents: [
-             { documentName: docNames.find(n => n.includes('HAWB')) || docNames[0], value: "2" },
-             { documentName: docNames.find(n => n.includes('Xerox')) || docNames[2], value: "4" },
-          ],
-          recommendation: "Physically count the packages and amend the documentation to reflect the actual count.",
-        },
-        {
-          fieldName: "Shipper Address",
-          category: 'minor',
-          impact: "Minor risk of confusion, but could delay courier or official correspondence.",
-          documents: [
-            { documentName: docNames[0], value: "LOWER MIDLETON STREET" },
-            { documentName: docNames[1], value: "LOWER MIDDLETON STREET" },
-          ],
-          recommendation: "Standardize address across all templates for future shipments. No immediate action required for this shipment.",
-        },
-      ],
-      insights: [
+    let expertSummary = "This shipment has multiple critical discrepancies, including a mismatch in HSN codes and package counts. This poses a high risk for customs delays and potential fines. Immediate manual review and correction are required before proceeding.";
+    const insights: DocumentVerificationReport['insights'] = [
         {
           title: "Customs Compliance Risk",
           description: "The HSN code discrepancy is a major red flag for customs authorities and will likely trigger an inspection, causing significant delays.",
@@ -181,7 +157,50 @@ export class DocumentVerificationService {
           category: 'financial',
           severity: 'info',
         }
+    ];
+
+    if (failedExtractions.length > 0) {
+        expertSummary += ` Additionally, ${failedExtractions.length} document(s) failed to process and were excluded from this analysis.`;
+        insights.unshift({
+            title: "Incomplete Document Set",
+            description: `The following documents failed during the extraction phase and could not be included in this verification: ${failedExtractions.map(d => d.fileName).join(', ')}. The analysis is based on a partial set.`,
+            category: 'operational',
+            severity: 'warning'
+        });
+    }
+
+    return {
+      summary: {
+        shipmentIdentifier: "AWB 098-80828764",
+        documentCount: successfulExtractions.length,
+        documentTypes: docTypes,
+        consistencyScore: 0.65,
+        riskAssessment: 'high',
+        expertSummary,
+      },
+      discrepancies: [
+        {
+          fieldName: "HSN Code",
+          category: 'critical',
+          impact: "Incorrect customs duties will be applied, leading to penalties and shipment delays.",
+          documents: [
+            { documentName: docNames.find(n => n.includes('SKI.xls')) || docNames[0] || "Doc 1", value: "73201019" },
+            { documentName: docNames.find(n => n.includes('Xerox')) || docNames[1] || "Doc 2", value: "73261990" },
+          ],
+          recommendation: "Verify the correct HSN code with the engineering/product team and update all documents to match.",
+        },
+        {
+          fieldName: "Package Count",
+          category: 'important',
+          impact: "Mismatch can lead to confusion at receiving, and suggests part of the shipment may be missing or incorrectly documented.",
+          documents: [
+             { documentName: docNames.find(n => n.includes('HAWB')) || docNames[0] || "Doc 1", value: "2" },
+             { documentName: docNames.find(n => n.includes('Xerox')) || docNames[2] || "Doc 3", value: "4" },
+          ],
+          recommendation: "Physically count the packages and amend the documentation to reflect the actual count.",
+        },
       ],
+      insights,
       recommendations: [
         {
           action: "Immediately correct the HSN code on all relevant documents.",
@@ -194,9 +213,9 @@ export class DocumentVerificationService {
           reasoning: "To ensure the full shipment is accounted for before it leaves the facility.",
         },
         {
-          action: "Update internal templates with standardized shipper/consignee information.",
-          priority: 'low',
-          reasoning: "To prevent minor data entry errors in future shipments.",
+          action: "Re-process failed documents to ensure a complete analysis.",
+          priority: 'medium',
+          reasoning: "The current verification is based on an incomplete set of documents.",
         },
       ],
       metadata: {
@@ -208,22 +227,29 @@ export class DocumentVerificationService {
 
   /**
    * Constructs the prompt to send to the LLM for document verification.
-   * @param extractionResults - The array of document extraction data.
+   * @param successfulExtractionResults - The array of successfully extracted document data.
    * @returns A string containing the full prompt.
    */
-  private buildVerificationPrompt(extractionResults: Array<EnhancedExtractionResult & { fileName: string }>): string {
-    const documentsData = extractionResults
+  private buildVerificationPrompt(successfulExtractionResults: Array<EnhancedExtractionResult & { fileName: string }>): string {
+    const documentsData = successfulExtractionResults
       .map(
-        (result) => `
+        (result) => {
+            // Defensive coding to prevent type errors
+            const docType = result.data?.metadata?.documentType || 'unknown';
+            const confidence = (result.data?.metadata?.extractionConfidence ?? 0).toFixed(2);
+            const data = JSON.stringify(result.data ?? {}, null, 2);
+
+            return `
 <document>
   <fileName>${result.fileName}</fileName>
-  <documentType>${result.data?.metadata.documentType || 'unknown'}</documentType>
-  <extractionConfidence>${result.data?.metadata.extractionConfidence.toFixed(2) || 'N/A'}</extractionConfidence>
+  <documentType>${docType}</documentType>
+  <extractionConfidence>${confidence}</extractionConfidence>
   <extractedData>
-    ${JSON.stringify(result.data, null, 2)}
+    ${data}
   </extractedData>
 </document>
-`
+`;
+        }
       )
       .join('');
 
@@ -343,8 +369,10 @@ export const useDocumentVerification = () => {
     documents: Array<EnhancedExtractionResult & { fileName: string }>,
     options: { useMockData?: boolean } = {}
     ) => {
-    if (documents.length < 2) {
-      setVerificationError("At least two documents are needed for verification.");
+    // This check is now inside the service, but it's good to have it here too to prevent unnecessary state updates.
+    const successfulDocs = documents.filter(d => d.success && d.data);
+    if (successfulDocs.length < 2) {
+      // Don't set an error here, the UI component will handle the "not enough docs" state.
       return;
     }
 

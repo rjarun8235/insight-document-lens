@@ -59,6 +59,8 @@ export const DocumentVerificationProcessor: React.FC<DocumentVerificationProcess
   };
 
   const successfulExtractionsCount = extractionResults.filter(r => r.success).length;
+  const successfulExtractions = extractionResults.filter(r => r.success);
+  const failedExtractions      = extractionResults.filter(r => !r.success);
 
   const DebugView = () => (
     <Card className="mt-4 bg-gray-50 border-dashed">
@@ -85,6 +87,9 @@ export const DocumentVerificationProcessor: React.FC<DocumentVerificationProcess
   );
 
   const renderContent = () => {
+    /* ------------------------------------------------------------
+     * 0. Not enough successful docs – can’t verify
+     * ---------------------------------------------------------- */
     if (successfulExtractionsCount < 2) {
         return (
           <Alert>
@@ -97,6 +102,23 @@ export const DocumentVerificationProcessor: React.FC<DocumentVerificationProcess
         );
       }
     
+      /* ------------------------------------------------------------
+       * 1. Show warning if any documents failed to extract
+       * ---------------------------------------------------------- */
+      const failedWarning =
+        failedExtractions.length > 0 ? (
+          <Alert variant="warning" className="mb-6">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>
+              {failedExtractions.length} document
+              {failedExtractions.length > 1 ? 's' : ''} failed to extract
+            </AlertTitle>
+            <AlertDescription className="text-xs mt-1">
+              {failedExtractions.map((d) => d.fileName).join(', ')}
+            </AlertDescription>
+          </Alert>
+        ) : null;
+
       if (isVerifying) {
         return (
           <Card className="mt-8">
@@ -133,6 +155,7 @@ export const DocumentVerificationProcessor: React.FC<DocumentVerificationProcess
       if (verificationReport) {
         return (
             <div className="mt-8">
+                {failedWarning}
                 <DocumentVerificationReport report={verificationReport} />
             </div>
         );
@@ -150,6 +173,12 @@ export const DocumentVerificationProcessor: React.FC<DocumentVerificationProcess
             <Button onClick={handleManualVerification}>
               Start Verification
             </Button>
+            {/* list successful docs */}
+            <div className="mt-6 space-y-1 text-xs text-muted-foreground">
+              {successfulExtractions.map((d) => (
+                <div key={d.fileName}>✔ {d.fileName}</div>
+              ))}
+            </div>
           </CardContent>
         </Card>
       );
