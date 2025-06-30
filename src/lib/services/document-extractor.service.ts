@@ -13,10 +13,6 @@ import {
   normalizeFieldValue,
   preprocessDocumentContent
 } from '../document-patterns';
-import { 
-  validateFieldFormat,
-  validateDocumentTypeData
-} from '../document-validation';
 
 // Import templates
 import { EnhancedLogisticsPrompt, EnhancedPromptContext } from '../../templates/enhanced-logistics-prompt';
@@ -78,6 +74,7 @@ export interface EnhancedExtractionResult extends ExtractionResult {
   documentQuality?: any;
   hsnValidation?: any;
   crossValidation?: any;
+  processingTimeMs?: number;
 }
 
 /**
@@ -89,6 +86,14 @@ export interface ExtractionOptions {
   enhancedExtraction?: boolean;
   includeRawResponse?: boolean;
   validateResults?: boolean;
+}
+
+/**
+ * Simple validation result interface
+ */
+interface ValidationResult {
+  missingFields: string[];
+  issues: string[];
 }
 
 /**
@@ -123,7 +128,7 @@ export class DocumentExtractorService {
       console.log(`🔍 Extracting data from ${document.name} (${document.documentType})...`);
       
       // Preprocess document content
-      const processedContent = preprocessDocumentContent(document.content);
+      const processedContent = preprocessDocumentContent(document.content, document.documentType);
       
       // Build the extraction prompt
       const prompt = this.buildExtractionPrompt(document.documentType, processedContent, options);
@@ -162,7 +167,8 @@ export class DocumentExtractorService {
       const enhancedResult: EnhancedExtractionResult = {
         ...extractionResult,
         fileName: document.name,
-        documentType: document.documentType
+        documentType: document.documentType,
+        processingTimeMs: Date.now() - startTime
       };
       
       console.log(`✅ Extraction complete for ${document.name}`);
@@ -236,10 +242,10 @@ export class DocumentExtractorService {
     if (options.enhancedExtraction) {
       const promptContext: EnhancedPromptContext = {
         documentType,
-        documentContent: content
+        expectedFields: this.getCriticalFieldsForType(documentType)
       };
       
-      return EnhancedLogisticsPrompt(promptContext);
+      return EnhancedLogisticsPrompt.generatePrompt(promptContext);
     }
     
     // Use standard extraction prompt
@@ -353,6 +359,39 @@ RESPONSE FORMAT:
   }
 
   /**
+   * Simple validation function to check for required fields
+   * 
+   * @param data - The data to validate
+   * @param requiredFields - The required fields
+   * @returns Validation result with missing fields and issues
+   */
+  private validateData(data: any, requiredFields: string[]): ValidationResult {
+    const missingFields: string[] = [];
+    const issues: string[] = [];
+    
+    // Check for missing required fields
+    requiredFields.forEach(field => {
+      const fieldParts = field.split('.');
+      let currentObj = data;
+      
+      // Navigate through nested objects
+      for (let i = 0; i < fieldParts.length; i++) {
+        const part = fieldParts[i];
+        
+        if (!currentObj || !currentObj[part]) {
+          missingFields.push(field);
+          issues.push(`Missing required field: ${field}`);
+          break;
+        }
+        
+        currentObj = currentObj[part];
+      }
+    });
+    
+    return { missingFields, issues };
+  }
+
+  /**
    * Validates an extraction result
    * 
    * @param result - The result to validate
@@ -369,7 +408,7 @@ RESPONSE FORMAT:
     result.data.metadata.criticalFields = criticalFields;
     
     // Validate document type data
-    const validationResult = validateDocumentTypeData(result.data, documentType);
+    const validationResult = this.validateData(result.data, criticalFields);
     
     // Update metadata with validation results
     result.data.metadata.missingFields = validationResult.missingFields;
@@ -386,27 +425,13 @@ RESPONSE FORMAT:
    * @returns The critical fields
    */
   getCriticalFieldsForType(documentType: LogisticsDocumentType): string[] {
-    const criticalFieldsMap: Record<LogisticsDocumentType, string[]> = {
+    const criticalFieldsMap: Record<string, string[]> = {
       'invoice': ['invoiceNumber', 'invoiceDate', 'totalAmount', 'seller', 'buyer'],
       'air_waybill': ['awbNumber', 'origin', 'destination', 'shipper', 'consignee', 'goodsDescription'],
+      'house_waybill': ['hawbNumber', 'origin', 'destination', 'shipper', 'consignee', 'goodsDescription'],
       'bill_of_entry': ['beNumber', 'importerName', 'importerCode', 'assessableValue', 'totalDuty'],
       'packing_list': ['invoiceNumber', 'packageCount', 'grossWeight', 'netWeight'],
-      'bill_of_lading': ['blNumber', 'shipper', 'consignee', 'vessel', 'portOfLoading', 'portOfDischarge'],
-      'certificate_of_origin': ['certificateNumber', 'exporter', 'consignee', 'countryOfOrigin'],
-      'commercial_invoice': ['invoiceNumber', 'invoiceDate', 'seller', 'buyer', 'totalAmount'],
-      'customs_invoice': ['invoiceNumber', 'exporterName', 'importerName', 'totalValue'],
-      'dangerous_goods_declaration': ['unNumber', 'properShippingName', 'hazardClass', 'packingGroup'],
-      'delivery_order': ['deliveryOrderNumber', 'consignee', 'deliveryDate', 'goodsDescription'],
-      'export_declaration': ['declarationNumber', 'exporterName', 'exporterCode', 'goodsDescription'],
-      'health_certificate': ['certificateNumber', 'issueDate', 'exporter', 'consignee'],
-      'import_permit': ['permitNumber', 'importerName', 'goodsDescription', 'validityPeriod'],
-      'inspection_certificate': ['certificateNumber', 'inspectionDate', 'inspectionLocation'],
-      'insurance_certificate': ['certificateNumber', 'insurer', 'insured', 'coverageAmount'],
-      'letter_of_credit': ['lcNumber', 'issuer', 'beneficiary', 'amount', 'expiryDate'],
-      'manifest': ['manifestNumber', 'vessel', 'voyage', 'portOfLoading', 'portOfDischarge'],
-      'phytosanitary_certificate': ['certificateNumber', 'issueDate', 'exporter', 'consignee'],
-      'proforma_invoice': ['invoiceNumber', 'seller', 'buyer', 'totalAmount'],
-      'shipping_bill': ['shippingBillNumber', 'exporterName', 'exporterCode', 'fobValue'],
+      'delivery_note': ['deliveryNumber', 'customerName', 'deliveryDate', 'items'],
       'unknown': []
     };
     

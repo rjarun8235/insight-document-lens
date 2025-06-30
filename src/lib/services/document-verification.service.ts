@@ -889,8 +889,7 @@ INSTRUCTIONS:
           'air_waybill': 'identifiers.awbNumber',
           'packing_list': 'identifiers.awbNumber',
           'bill_of_entry': 'identifiers.awbNumber',
-          'commercial_invoice': 'identifiers.awbNumber',
-          'customs_invoice': 'identifiers.awbNumber',
+          'delivery_note': 'identifiers.awbNumber',
           'unknown': 'identifiers.awbNumber'
         },
         category: 'critical',
@@ -899,9 +898,8 @@ INSTRUCTIONS:
       'invoiceNumber': {
         paths: {
           'invoice': 'identifiers.invoiceNumber',
-          'commercial_invoice': 'identifiers.invoiceNumber',
-          'customs_invoice': 'identifiers.invoiceNumber',
           'packing_list': 'identifiers.invoiceNumber',
+          'delivery_note': 'identifiers.invoiceNumber',
           'unknown': 'identifiers.invoiceNumber'
         },
         category: 'critical',
@@ -914,8 +912,7 @@ INSTRUCTIONS:
           'invoice': 'parties.shipper.name',
           'air_waybill': 'parties.shipper.name',
           'packing_list': 'parties.shipper.name',
-          'bill_of_lading': 'parties.shipper.name',
-          'commercial_invoice': 'parties.shipper.name',
+          'delivery_note': 'parties.shipper.name',
           'unknown': 'parties.shipper.name'
         },
         category: 'important',
@@ -926,8 +923,7 @@ INSTRUCTIONS:
           'invoice': 'parties.consignee.name',
           'air_waybill': 'parties.consignee.name',
           'packing_list': 'parties.consignee.name',
-          'bill_of_lading': 'parties.consignee.name',
-          'commercial_invoice': 'parties.consignee.name',
+          'delivery_note': 'parties.consignee.name',
           'unknown': 'parties.consignee.name'
         },
         category: 'important',
@@ -941,7 +937,7 @@ INSTRUCTIONS:
           'air_waybill': 'shipment.grossWeight.value',
           'packing_list': 'shipment.grossWeight.value',
           'bill_of_entry': 'shipment.grossWeight.value',
-          'commercial_invoice': 'shipment.grossWeight.value',
+          'delivery_note': 'shipment.grossWeight.value',
           'unknown': 'shipment.grossWeight.value'
         },
         category: 'important',
@@ -953,7 +949,7 @@ INSTRUCTIONS:
           'air_waybill': 'shipment.packageCount.value',
           'packing_list': 'shipment.packageCount.value',
           'bill_of_entry': 'shipment.packageCount.value',
-          'commercial_invoice': 'shipment.packageCount.value',
+          'delivery_note': 'shipment.packageCount.value',
           'unknown': 'shipment.packageCount.value'
         },
         category: 'important',
@@ -964,9 +960,8 @@ INSTRUCTIONS:
       'totalValue': {
         paths: {
           'invoice': 'financial.totalAmount.amount',
-          'commercial_invoice': 'financial.totalAmount.amount',
-          'customs_invoice': 'financial.totalAmount.amount',
           'bill_of_entry': 'financial.assessableValue.amount',
+          'delivery_note': 'financial.totalAmount.amount',
           'unknown': 'financial.totalAmount.amount'
         },
         category: 'critical',
@@ -975,9 +970,8 @@ INSTRUCTIONS:
       'currency': {
         paths: {
           'invoice': 'financial.totalAmount.currency',
-          'commercial_invoice': 'financial.totalAmount.currency',
-          'customs_invoice': 'financial.totalAmount.currency',
           'bill_of_entry': 'financial.assessableValue.currency',
+          'delivery_note': 'financial.totalAmount.currency',
           'unknown': 'financial.totalAmount.currency'
         },
         category: 'important',
@@ -991,7 +985,7 @@ INSTRUCTIONS:
           'air_waybill': 'goods.description',
           'packing_list': 'goods.description',
           'bill_of_entry': 'goods.description',
-          'commercial_invoice': 'goods.description',
+          'delivery_note': 'goods.description',
           'unknown': 'goods.description'
         },
         category: 'important',
@@ -1000,9 +994,8 @@ INSTRUCTIONS:
       'hsnCode': {
         paths: {
           'invoice': 'goods.hsnCode',
-          'commercial_invoice': 'goods.hsnCode',
-          'customs_invoice': 'goods.hsnCode',
           'bill_of_entry': 'goods.hsnCode',
+          'delivery_note': 'goods.hsnCode',
           'unknown': 'goods.hsnCode'
         },
         category: 'critical',
@@ -1013,8 +1006,7 @@ INSTRUCTIONS:
       'invoiceDate': {
         paths: {
           'invoice': 'dates.invoiceDate',
-          'commercial_invoice': 'dates.invoiceDate',
-          'customs_invoice': 'dates.invoiceDate',
+          'delivery_note': 'dates.invoiceDate',
           'unknown': 'dates.invoiceDate'
         },
         category: 'important',
@@ -1024,7 +1016,7 @@ INSTRUCTIONS:
         paths: {
           'invoice': 'dates.shipmentDate',
           'air_waybill': 'dates.shipmentDate',
-          'bill_of_lading': 'dates.shipmentDate',
+          'delivery_note': 'dates.shipmentDate',
           'unknown': 'dates.shipmentDate'
         },
         category: 'important',
