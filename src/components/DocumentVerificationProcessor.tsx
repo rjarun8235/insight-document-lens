@@ -5,10 +5,7 @@ import { EnhancedExtractionResult } from '../lib/LLMExtractionService';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Loader2, AlertCircle, PlayCircle, Bug, TestTube2 } from 'lucide-react';
-import { Switch } from '@/components/ui/switch';
-import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
+import { Loader2, AlertCircle, PlayCircle, Bug } from 'lucide-react';
 
 interface DocumentVerificationProcessorProps {
   extractionResults: Array<EnhancedExtractionResult & { fileName: string }>;
@@ -28,7 +25,6 @@ export const DocumentVerificationProcessor: React.FC<DocumentVerificationProcess
 
   const [hasTriggered, setHasTriggered] = useState(false);
   const [showDebug, setShowDebug] = useState(true);
-  const [useMockData, setUseMockData] = useState(true); // Default to true for development
 
   // Automatically trigger verification when sufficient extraction results are available.
   useEffect(() => {
@@ -37,21 +33,20 @@ export const DocumentVerificationProcessor: React.FC<DocumentVerificationProcess
       isVerifying,
       verificationReportExists: !!verificationReport,
       hasTriggered,
-      useMockData,
     });
     const successfulExtractions = extractionResults.filter(r => r.success);
     if (successfulExtractions.length > 1 && !isVerifying && !verificationReport && !hasTriggered) {
-      console.log(`[VerificationProcessor] Auto-triggering verification (Mock: ${useMockData})...`);
-      verifyDocuments(successfulExtractions, { useMockData });
+      console.log(`[VerificationProcessor] Auto-triggering verification...`);
+      verifyDocuments(successfulExtractions);
       setHasTriggered(true);
     }
-  }, [extractionResults, isVerifying, verificationReport, hasTriggered, verifyDocuments, useMockData]);
+  }, [extractionResults, isVerifying, verificationReport, hasTriggered, verifyDocuments]);
 
   const handleManualVerification = () => {
-    console.log(`[VerificationProcessor] Manual verification triggered (Mock: ${useMockData}).`);
+    console.log(`[VerificationProcessor] Manual verification triggered.`);
     const successfulExtractions = extractionResults.filter(r => r.success);
     if (successfulExtractions.length > 1) {
-      verifyDocuments(successfulExtractions, { useMockData });
+      verifyDocuments(successfulExtractions);
       setHasTriggered(true);
     } else {
       console.warn('[VerificationProcessor] Manual trigger clicked, but not enough successful extractions.');
@@ -75,7 +70,6 @@ export const DocumentVerificationProcessor: React.FC<DocumentVerificationProcess
           {JSON.stringify({
             isVerifying,
             hasTriggered,
-            useMockData,
             verificationError,
             reportExists: !!verificationReport,
             successfulExtractionsCount,
@@ -186,22 +180,6 @@ export const DocumentVerificationProcessor: React.FC<DocumentVerificationProcess
 
   return (
     <div>
-      <div className="flex items-center justify-end space-x-4 p-2 bg-gray-100 rounded-md mb-4">
-        {useMockData && (
-            <Badge variant="outline" className="border-yellow-500 text-yellow-600 bg-yellow-50 flex items-center gap-2">
-                <TestTube2 className="h-4 w-4" />
-                Mock Mode Active
-            </Badge>
-        )}
-        <div className="flex items-center space-x-2">
-            <Switch
-                id="mock-data-toggle"
-                checked={useMockData}
-                onCheckedChange={setUseMockData}
-            />
-            <Label htmlFor="mock-data-toggle">Use Mock Data</Label>
-        </div>
-      </div>
         {renderContent()}
         {showDebug ? (
             <DebugView />

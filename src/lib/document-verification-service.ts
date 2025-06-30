@@ -55,26 +55,16 @@ export class DocumentVerificationService {
   /**
    * Analyzes multiple document extraction payloads and generates a comprehensive verification report.
    * @param extractionResults - An array of extraction results from multiple documents, can include failures.
-   * @param useMockData - If true, returns mock data instead of calling the API.
    * @returns A promise that resolves to a DocumentVerificationReport.
    */
   public async verifyDocuments(
-    extractionResults: Array<EnhancedExtractionResult & { fileName: string }>,
-    useMockData: boolean = false
+    extractionResults: Array<EnhancedExtractionResult & { fileName: string }>
   ): Promise<DocumentVerificationReport> {
     const startTime = Date.now();
     const successfulExtractions = extractionResults.filter(r => r.success && r.data);
 
     if (successfulExtractions.length < 2) {
       throw new Error('At least two documents must be successfully extracted to run verification.');
-    }
-
-    if (useMockData) {
-      console.log(" MOCK MODE: Using mock data for verification report.");
-      // Simulate network delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      // Pass the full results so the mock can be aware of failures
-      return this.generateMockVerificationReport(extractionResults);
     }
 
     const prompt = this.buildVerificationPrompt(successfulExtractions);
@@ -120,109 +110,6 @@ export class DocumentVerificationService {
       console.error('Document verification failed:', error);
       throw new Error(`Failed to verify documents: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
-  }
-
-  /**
-   * Generates a realistic mock verification report for testing and demonstration.
-   * This version is aware of partial failures in the extraction process.
-   * @param extractionResults - The full array of document extraction data.
-   * @returns A mock DocumentVerificationReport object.
-   */
-  private generateMockVerificationReport(
-    extractionResults: Array<EnhancedExtractionResult & { fileName: string }>
-  ): DocumentVerificationReport {
-    const successfulExtractions = extractionResults.filter(d => d.success && d.data);
-    const failedExtractions = extractionResults.filter(d => !d.success);
-    
-    const docNames = successfulExtractions.map(d => d.fileName);
-    const docTypes = [...new Set(successfulExtractions.map(d => d.data?.metadata.documentType || 'unknown'))];
-
-    let expertSummary = "This shipment has multiple critical discrepancies, including a mismatch in HSN codes and package counts. This poses a high risk for customs delays and potential fines. Immediate manual review and correction are required before proceeding.";
-    const insights: DocumentVerificationReport['insights'] = [
-        {
-          title: "Customs Compliance Risk",
-          description: "The HSN code discrepancy is a major red flag for customs authorities and will likely trigger an inspection, causing significant delays.",
-          category: 'customs',
-          severity: 'critical',
-        },
-        {
-          title: "Operational Inefficiency",
-          description: "Inconsistent data across documents (e.g., weights, package counts) suggests a lack of process control, which can lead to receiving errors and inventory mismatches.",
-          category: 'operational',
-          severity: 'warning',
-        },
-         {
-          title: "Financial Inaccuracy",
-          description: "The difference in gross weight (36kg vs 37kg) may result in minor discrepancies in freight charges.",
-          category: 'financial',
-          severity: 'info',
-        }
-    ];
-
-    if (failedExtractions.length > 0) {
-        expertSummary += ` Additionally, ${failedExtractions.length} document(s) failed to process and were excluded from this analysis.`;
-        insights.unshift({
-            title: "Incomplete Document Set",
-            description: `The following documents failed during the extraction phase and could not be included in this verification: ${failedExtractions.map(d => d.fileName).join(', ')}. The analysis is based on a partial set.`,
-            category: 'operational',
-            severity: 'warning'
-        });
-    }
-
-    return {
-      summary: {
-        shipmentIdentifier: "AWB 098-80828764",
-        documentCount: successfulExtractions.length,
-        documentTypes: docTypes,
-        consistencyScore: 0.65,
-        riskAssessment: 'high',
-        expertSummary,
-      },
-      discrepancies: [
-        {
-          fieldName: "HSN Code",
-          category: 'critical',
-          impact: "Incorrect customs duties will be applied, leading to penalties and shipment delays.",
-          documents: [
-            { documentName: docNames.find(n => n.includes('SKI.xls')) || docNames[0] || "Doc 1", value: "73201019" },
-            { documentName: docNames.find(n => n.includes('Xerox')) || docNames[1] || "Doc 2", value: "73261990" },
-          ],
-          recommendation: "Verify the correct HSN code with the engineering/product team and update all documents to match.",
-        },
-        {
-          fieldName: "Package Count",
-          category: 'important',
-          impact: "Mismatch can lead to confusion at receiving, and suggests part of the shipment may be missing or incorrectly documented.",
-          documents: [
-             { documentName: docNames.find(n => n.includes('HAWB')) || docNames[0] || "Doc 1", value: "2" },
-             { documentName: docNames.find(n => n.includes('Xerox')) || docNames[2] || "Doc 3", value: "4" },
-          ],
-          recommendation: "Physically count the packages and amend the documentation to reflect the actual count.",
-        },
-      ],
-      insights,
-      recommendations: [
-        {
-          action: "Immediately correct the HSN code on all relevant documents.",
-          priority: 'high',
-          reasoning: "To avoid customs penalties and delays, which is the most significant risk.",
-        },
-        {
-          action: "Verify the physical package count against all documents.",
-          priority: 'medium',
-          reasoning: "To ensure the full shipment is accounted for before it leaves the facility.",
-        },
-        {
-          action: "Re-process failed documents to ensure a complete analysis.",
-          priority: 'medium',
-          reasoning: "The current verification is based on an incomplete set of documents.",
-        },
-      ],
-      metadata: {
-        analysisTimestamp: new Date().toISOString(),
-        processingTime: 1.23, // Mock processing time
-      },
-    };
   }
 
   /**
@@ -366,8 +253,7 @@ export const useDocumentVerification = () => {
   const verificationService = new DocumentVerificationService();
 
   const verifyDocuments = async (
-    documents: Array<EnhancedExtractionResult & { fileName: string }>,
-    options: { useMockData?: boolean } = {}
+    documents: Array<EnhancedExtractionResult & { fileName: string }>
     ) => {
     // This check is now inside the service, but it's good to have it here too to prevent unnecessary state updates.
     const successfulDocs = documents.filter(d => d.success && d.data);
@@ -381,7 +267,7 @@ export const useDocumentVerification = () => {
     setVerificationError(null);
 
     try {
-      const report = await verificationService.verifyDocuments(documents, options.useMockData);
+      const report = await verificationService.verifyDocuments(documents);
       setVerificationReport(report);
     } catch (error) {
       setVerificationError(error instanceof Error ? error.message : "An unknown error occurred during verification.");
