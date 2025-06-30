@@ -1,6 +1,26 @@
 import { LogisticsExtractionSchema } from './LLMExtractionService';
 import { LogisticsDocumentType } from './document-types';
 
+/**
+ * Utility to safely extract a trimmed string value from various possible
+ * extraction formats (primitive, number, { value, confidence }, etc.).
+ * Returns `null` if a clean string cannot be derived.
+ */
+const safeGetStringValue = (val: unknown): string | null => {
+  if (val == null) return null;
+  // handle common `{ value: 'x', confidence: 0.x }` structure
+  if (typeof val === 'object' && 'value' in (val as any)) {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    val = (val as any).value;
+  }
+  if (typeof val === 'number') {
+    val = String(val);
+  }
+  if (typeof val !== 'string') return null;
+  const trimmed = val.trim();
+  return trimmed.length ? trimmed : null;
+};
+
 export interface ValidationResult {
   isValid: boolean;
   issues: string[];
@@ -80,24 +100,8 @@ export class LogisticsBusinessRules {
   }
 
   static hsnCodeMapping(commercialHSN?: string, customsHSN?: string): BusinessRuleResult {
-    // helper to extract a plain string from optional object/number formats
-    const normalizeHSN = (code: unknown): string | null => {
-      if (code == null) return null;
-      // Object with { value: 'xxxxx', … }
-      if (typeof code === 'object' && 'value' in (code as any)) {
-        code = (code as any).value;
-      }
-      // number → string
-      if (typeof code === 'number') {
-        code = String(code);
-      }
-      if (typeof code !== 'string') return null;
-      const trimmed = code.trim();
-      return trimmed.length ? trimmed : null;
-    };
-
-    const commercialRaw = normalizeHSN(commercialHSN);
-    const customsRaw    = normalizeHSN(customsHSN);
+    const commercialRaw = safeGetStringValue(commercialHSN);
+    const customsRaw    = safeGetStringValue(customsHSN);
 
     if (!commercialRaw || !customsRaw) {
       return {
@@ -328,23 +332,26 @@ export class DocumentQualityAssessment {
     let totalChecks = 0;
 
     // Check HSN code format (should be 6-8 digits)
-    if (data.product?.hsnCode) {
+    const hsnCodeRaw = safeGetStringValue(data.product?.hsnCode);
+    if (hsnCodeRaw) {
       const hsnPattern = /^\d{6,8}$/;
-      validFormats += hsnPattern.test(data.product.hsnCode.replace(/\D/g, '')) ? 1 : 0;
+      validFormats += hsnPattern.test(hsnCodeRaw.replace(/\D/g, '')) ? 1 : 0;
       totalChecks++;
     }
 
     // Check AWB number format
-    if (data.identifiers.awbNumber) {
+    const awbRaw = safeGetStringValue(data.identifiers.awbNumber);
+    if (awbRaw) {
       const awbPattern = /^\d{3}[-\s]?\d{8,}$/;
-      validFormats += awbPattern.test(data.identifiers.awbNumber) ? 1 : 0;
+      validFormats += awbPattern.test(awbRaw) ? 1 : 0;
       totalChecks++;
     }
 
     // Check email format
-    if (data.parties.shipper?.email) {
+    const emailRaw = safeGetStringValue(data.parties.shipper?.email);
+    if (emailRaw) {
       const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      validFormats += emailPattern.test(data.parties.shipper.email) ? 1 : 0;
+      validFormats += emailPattern.test(emailRaw) ? 1 : 0;
       totalChecks++;
     }
 
